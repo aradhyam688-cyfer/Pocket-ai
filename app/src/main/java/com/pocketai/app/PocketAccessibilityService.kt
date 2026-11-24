@@ -1,6 +1,7 @@
 package com.pocketai.app
 
 import android.accessibilityservice.AccessibilityService
+import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
 import android.view.accessibility.AccessibilityEvent
@@ -37,7 +38,7 @@ class PocketAccessibilityService : AccessibilityService() {
                 if (t.isNotEmpty()) parts.add(t)
             }
         }
-        return parts.joinToString(" ").take(60)
+        return parts.joinToString(" ").take(80)
     }
 
     fun getCompressedScreen(maxNodes: Int = 35): String {
@@ -86,6 +87,22 @@ class PocketAccessibilityService : AccessibilityService() {
         return if (ok) "Tapped [${match.key}] \"${match.value.first}\"" else "Failed to tap \"${match.value.first}\""
     }
 
+    fun tapOrdinal(oneBasedIndex: Int): String? {
+        val rect = Rect()
+        val candidates = nodeMap.entries.filter { (_, pair) ->
+            val (label, node) = pair
+            node.getBoundsInScreen(rect)
+            !node.isEditable &&
+                label.length >= 12 &&
+                rect.height() >= 120 &&
+                rect.top >= 220
+        }
+        val chosen = candidates.getOrNull(oneBasedIndex - 1) ?: return null
+        val ok = chosen.value.second.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        val preview = chosen.value.first.take(35)
+        return if (ok) "Tapped #$oneBasedIndex \"$preview\"" else "Failed to tap #$oneBasedIndex"
+    }
+
     fun findEditableId(): Int? {
         return nodeMap.entries.firstOrNull { it.value.second.isEditable }?.key
     }
@@ -100,7 +117,7 @@ class PocketAccessibilityService : AccessibilityService() {
             }
         }
         collect(root)
-        val rect = android.graphics.Rect()
+        val rect = Rect()
         val dir = direction.lowercase().trim()
         val wantHorizontal = (dir == "left" || dir == "right")
         val target = scrollables
@@ -123,30 +140,7 @@ class PocketAccessibilityService : AccessibilityService() {
         return if (ok) "Scrolled $dir" else "Cannot scroll $dir"
     }
 
-    fun scrollDown(): String {
-        val root = rootInActiveWindow ?: return "Screen: unavailable"
-        val scrollables = mutableListOf<AccessibilityNodeInfo>()
-        fun collect(node: AccessibilityNodeInfo) {
-            if (node.isScrollable) scrollables.add(node)
-            for (i in 0 until node.childCount) {
-                node.getChild(i)?.let { collect(it) }
-            }
-        }
-        collect(root)
-        val rect = android.graphics.Rect()
-        val vertical = scrollables
-            .filter {
-                it.getBoundsInScreen(rect)
-                rect.height() > rect.width()
-            }
-            .maxByOrNull {
-                it.getBoundsInScreen(rect)
-                rect.width() * rect.height()
-            } ?: scrollables.firstOrNull()
-            ?: return "No scrollable view found"
-        val ok = vertical.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
-        return if (ok) "Scrolled down" else "Reached bottom"
-    }
+    fun scrollDown(): String = scroll("down")
 
     fun typeText(id: Int, text: String, submit: Boolean = true): String {
         val entry = nodeMap[id] ?: return "Error: element [$id] not found"
@@ -161,7 +155,7 @@ class PocketAccessibilityService : AccessibilityService() {
         if (submit && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             val submitted = node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
             return if (submitted) "Typed \"$text\" and pressed Enter on [$id]"
-            else "Typed \"$text\" into [$id] (IME enter unsupported; tap Search if needed)"
+            else "Typed \"$text\" into [$id] (IME enter unsupported)"
         }
         return "Typed \"$text\" into [$id]"
     }

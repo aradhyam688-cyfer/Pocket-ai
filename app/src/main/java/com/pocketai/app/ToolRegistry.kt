@@ -7,6 +7,16 @@ object ToolRegistry {
 
     private val toolRegex = Regex("""\[TOOL:\s*([a-zA-Z0-9_]+)(?:\|([^\]]*))?\]""")
 
+    private val appAliases = mapOf(
+        "yt" to "YouTube",
+        "wa" to "WhatsApp",
+        "ig" to "Instagram",
+        "fb" to "Facebook",
+        "gm" to "Gmail",
+        "calc" to "Calculator",
+        "cam" to "Camera"
+    )
+
     fun executeIfPresent(
         context: Context,
         modelOutput: String,
@@ -54,21 +64,23 @@ object ToolRegistry {
     }
 
     fun resolveFallbackApp(context: Context, userText: String): Pair<String, String>? {
-        val match = Regex("""(?i)\bopen\s+([a-z0-9._+-]+(?:\s+[a-z0-9._+-]+)?)(?=\s+(?:and|then|to)\b|$)""")
+        val match = Regex("""(?i)\bopen\s+([a-z0-9._+-]+(?:\s+[a-z0-9._+-]+)?)(?=\s*(?:,|and|then|to)\b|$)""")
             .find(userText.trim()) ?: return null
-        val query = match.groupValues[1].trim()
+        val raw = match.groupValues[1].trim()
+        val query = appAliases[raw.lowercase()] ?: raw
         return resolveApp(context, query)
     }
 
     private fun resolveApp(context: Context, query: String): Pair<String, String>? {
+        val mapped = appAliases[query.lowercase()] ?: query
         val pm = context.packageManager
-        pm.getLaunchIntentForPackage(query)?.let { return query to query }
+        pm.getLaunchIntentForPackage(mapped)?.let { return mapped to mapped }
 
         val mainIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         val apps = pm.queryIntentActivities(mainIntent, 0)
-        val qNorm = query.lowercase().replace(Regex("[^a-z0-9]"), "")
+        val qNorm = mapped.lowercase().replace(Regex("[^a-z0-9]"), "")
         val hit = apps.firstOrNull {
-            it.loadLabel(pm).toString().equals(query, ignoreCase = true)
+            it.loadLabel(pm).toString().equals(mapped, ignoreCase = true)
         } ?: apps.firstOrNull {
             it.loadLabel(pm).toString().lowercase().replace(Regex("[^a-z0-9]"), "").contains(qNorm)
         } ?: return null
