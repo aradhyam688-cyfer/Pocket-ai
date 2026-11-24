@@ -1,6 +1,8 @@
 package com.pocketai.app
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
@@ -17,6 +19,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 
 class MainActivity : ComponentActivity() {
@@ -40,7 +43,43 @@ fun PocketAIScreen(vm: MainViewModel = viewModel()) {
     val isGenerating by vm.isGenerating.collectAsState()
     val isNavigating by vm.isNavigating.collectAsState()
     val pending by vm.pendingConfirmation.collectAsState()
+
     var input by remember { mutableStateOf("") }
+    var voiceEnabled by remember { mutableStateOf(true) }
+    var isListening by remember { mutableStateOf(false) }
+    var voiceStatus by remember { mutableStateOf<String?>(null) }
+
+    val voice = remember {
+        VoiceController(
+            context = context,
+            onListeningChanged = { isListening = it },
+            onResult = { spoken ->
+                voiceStatus = null
+                vm.sendMessage(spoken)
+            },
+            onError = { err -> voiceStatus = err }
+        )
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { voice.release() }
+    }
+
+    // Speak the latest Assistant reply when generation finishes
+    LaunchedEffect(isGenerating, messages.size) {
+        if (!isGenerating && voiceEnabled) {
+            val last = messages.lastOrNull()
+            if (last != null && last.role == "Assistant" && last.text.isNotBlank()) {
+                voice.speak(last.text)
+            }
+        }
+    }
+
+    val micPermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) voice.startListening() else voiceStatus = "Microphone permission denied"
+    }
 
     val picker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -72,10 +111,12 @@ fun PocketAIScreen(vm: MainViewModel = viewModel()) {
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
-        Text(
-            text = "$status • Memories: $memoryCount • Mode: ${if (fastAuto) "Fast Auto" else "Full LLM"}",
-            style = MaterialTheme.typography.labelLarge
-        )
+        val header = buildString {
+            append("$status • Memories: $memoryCount • ${if (fastAuto) "Fast" else "LLM"}")
+            if (isListening) append(" • Listening...")
+            voiceStatus?.let { append(" • $it") }
+        }
+        Text(text = header, style = MaterialTheme.typography.labelLarge)
         Spacer(Modifier.height(8.dp))
 
         Row(
@@ -95,12 +136,23 @@ fun PocketAIScreen(vm: MainViewModel = viewModel()) {
                 onClick = { vm.toggleFastAuto() },
                 label = { Text("Fast Auto") }
             )
+            FilterChip(
+                selected = voiceEnabled,
+                onClick = {
+                    voiceEnabled = !voiceEnabled
+                    if (!voiceEnabled) voice.stopSpeaking()
+                },
+                label = { Text(if (voiceEnabled) "Voice On" else "Muted") }
+            )
             OutlinedButton(onClick = { vm.clearChat() }) {
                 Text("Clear")
             }
             if (isGenerating || isNavigating) {
                 Button(
-                    onClick = { vm.stopNavigation() },
+                    onClick = {
+                        voice.stopSpeaking()
+                        vm.stopNavigation()
+                    },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                 ) {
                     Text("Stop")
@@ -126,8 +178,23 @@ fun PocketAIScreen(vm: MainViewModel = viewModel()) {
                 value = input,
                 onValueChange = { input = it },
                 modifier = Modifier.weight(1f),
-                placeholder = { Text("Command Ultron or /remember ...") }
+                placeholder = { Text("Command Ultron or tap Mic...") }
             )
+            OutlinedButton(
+                enabled = !isGenerating && !isNavigating,
+                onClick = {
+                    if (isListening) {
+                        voice.stopListening()
+                    } else {
+                        val hasMic = ContextCompat.checkSelfPermission(
+                            context, Manifest.permission.RECORD_AUDIO
+                        ) == PackageManager.PERMISSION_GRANTED
+                        if (hasMic) voice.startListening() else micPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    }
+                }
+            ) {
+                Text(if (isListening) "..." else "Mic")
+            }
             Button(
                 enabled = !isGenerating && !isNavigating,
                 onClick = {
