@@ -110,55 +110,8 @@ class PocketAccessibilityService : AccessibilityService() {
     }
 
     fun scroll(direction: String): String {
-        val root = rootInActiveWindow ?: return "Screen: unavailable"
-        val scrollables = mutableListOf<AccessibilityNodeInfo>()
-        fun collect(node: AccessibilityNodeInfo) {
-            if (node.isScrollable) scrollables.add(node)
-            for (i in 0 until node.childCount) {
-                node.getChild(i)?.let { collect(it) }
-            }
-        }
-        collect(root)
-        val rect = Rect()
         val dir = direction.lowercase().trim()
-        val wantHorizontal = (dir == "left" || dir == "right")
-        val target = scrollables
-            .filter {
-                it.getBoundsInScreen(rect)
-                if (wantHorizontal) rect.width() > rect.height() else rect.height() > rect.width()
-            }
-            .maxByOrNull {
-                it.getBoundsInScreen(rect)
-                rect.width() * rect.height()
-            } ?: scrollables.firstOrNull()
-            ?: return "No scrollable view found"
-
-        val action = if (dir == "up" || dir == "left") {
-            AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
-        } else {
-            AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
-        }
-        val ok = target.performAction(action)
-        if (ok) return "Scrolled $dir"
         return swipeGesture(dir)
-    }
-
-
-    private fun swipeGesture(dir: String): String {
-        val dm = resources.displayMetrics
-        val w = dm.widthPixels.toFloat()
-        val h = dm.heightPixels.toFloat()
-        val path = Path()
-        when (dir) {
-            "down" -> { path.moveTo(w * 0.5f, h * 0.72f); path.lineTo(w * 0.5f, h * 0.28f) }
-            "up" -> { path.moveTo(w * 0.5f, h * 0.30f); path.lineTo(w * 0.5f, h * 0.74f) }
-            "right" -> { path.moveTo(w * 0.80f, h * 0.5f); path.lineTo(w * 0.20f, h * 0.5f) }
-            "left" -> { path.moveTo(w * 0.20f, h * 0.5f); path.lineTo(w * 0.80f, h * 0.5f) }
-            else -> return "Cannot scroll $dir"
-        }
-        val stroke = GestureDescription.StrokeDescription(path, 0L, 280L)
-        val ok = dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
-        return if (ok) "Swiped $dir" else "Cannot scroll $dir"
     }
 
     fun scrollDown(): String = scroll("down")
