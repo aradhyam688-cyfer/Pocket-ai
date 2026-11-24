@@ -386,17 +386,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 is AutoStep.Doomscroll -> {
                     svc.getCompressedScreen()
                     svc.findAndTapByText("Shorts")?.let { appendMessage("Tool", it); delay(1500L) }
-                    appendMessage("Tool", "Watching Shorts (progress-bar mode; tap Stop anytime)...")
+                    appendMessage("Tool", "Watching Shorts (tap Stop anytime)...")
+                    var reportedBar = false
                     for (i in 1..30) {
                         if (!_isNavigating.value) break
                         delay(1500L)
                         if (svc.isShortsAd()) {
-                            appendMessage("Tool", "Skipped ad")
-                            svc.scroll("down")
+                            appendMessage("Tool", "Skipped ad: ${svc.scroll("down")}")
                             continue
                         }
                         var maxSeen = 0f
                         var elapsedMs = 0L
+                        var sawProgress = false
                         while (_isNavigating.value && elapsedMs < 90000L) {
                             if (svc.isShortsAd()) {
                                 appendMessage("Tool", "Skipped ad")
@@ -404,14 +405,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             }
                             val p = svc.getShortsProgress()
                             if (p != null) {
+                                if (!reportedBar) {
+                                    appendMessage("Tool", "Progress bar detected")
+                                    reportedBar = true
+                                }
+                                sawProgress = true
                                 if (p >= 0.97f || (maxSeen >= 0.80f && p <= 0.15f)) break
                                 if (p > maxSeen) maxSeen = p
+                            } else if (!sawProgress && elapsedMs >= 25000L) {
+                                if (!reportedBar) {
+                                    appendMessage("Tool", "Progress bar hidden by YouTube; using 25s timer")
+                                    reportedBar = true
+                                }
+                                break
                             }
                             delay(500L)
                             elapsedMs += 500L
                         }
                         if (!_isNavigating.value) break
-                        svc.scroll("down")
+                        appendMessage("Tool", svc.scroll("down"))
                     }
                 }
                 is AutoStep.TapOrdinal -> {

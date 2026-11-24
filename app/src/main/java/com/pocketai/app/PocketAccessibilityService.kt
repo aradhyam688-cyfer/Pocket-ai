@@ -130,12 +130,23 @@ class PocketAccessibilityService : AccessibilityService() {
     fun getShortsProgress(): Float? {
         val root = rootInActiveWindow ?: return null
         var progress: Float? = null
+        val timePair = Regex("""(\d+):(\d{2})\s*(?:/|of)\s*(\d+):(\d{2})""")
         fun walk(node: AccessibilityNodeInfo) {
             if (progress != null) return
             val range = node.rangeInfo
             if (range != null && range.max > range.min) {
                 progress = ((range.current - range.min) / (range.max - range.min)).coerceIn(0f, 1f)
                 return
+            }
+            val txt = "${node.text ?: ""} ${node.contentDescription ?: ""}"
+            val m = timePair.find(txt)
+            if (m != null) {
+                val cur = m.groupValues[1].toFloat() * 60f + m.groupValues[2].toFloat()
+                val tot = m.groupValues[3].toFloat() * 60f + m.groupValues[4].toFloat()
+                if (tot > 0f) {
+                    progress = (cur / tot).coerceIn(0f, 1f)
+                    return
+                }
             }
             for (i in 0 until node.childCount) {
                 node.getChild(i)?.let { walk(it) }
