@@ -403,14 +403,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 appendMessage("Tool", "Skipped ad")
                                 break
                             }
-                            val p = svc.getShortsProgress()
+                            val p = svc.getShortsBarProgress()
                             if (p != null) {
                                 if (!reportedBar) {
                                     appendMessage("Tool", "Progress bar detected")
                                     reportedBar = true
                                 }
                                 sawProgress = true
-                                if (p >= 0.97f || (maxSeen >= 0.80f && p <= 0.15f)) break
+                                if (p >= 0.95f || (maxSeen >= 0.78f && p <= 0.15f)) break
                                 if (p > maxSeen) maxSeen = p
                             } else if (!sawProgress && elapsedMs >= 25000L) {
                                 if (!reportedBar) {
@@ -419,8 +419,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 }
                                 break
                             }
-                            delay(500L)
-                            elapsedMs += 500L
+                            delay(1200L)
+                            elapsedMs += 1200L
                         }
                         if (!_isNavigating.value) break
                         appendMessage("Tool", svc.scroll("down"))

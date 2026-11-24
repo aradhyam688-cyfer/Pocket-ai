@@ -3,7 +3,12 @@ package com.pocketai.app
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
+import android.graphics.Bitmap
+import android.graphics.Color
 import android.graphics.Rect
+import android.view.Display
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 import android.os.Build
 import android.os.Bundle
 import android.view.accessibility.AccessibilityEvent
@@ -154,6 +159,64 @@ class PocketAccessibilityService : AccessibilityService() {
         }
         walk(root)
         return progress
+    }
+
+
+    suspend fun getShortsBarProgress(): Float? {
+        getShortsProgress()?.let { return it }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
+        return suspendCancellableCoroutine { cont ->
+            takeScreenshot(Display.DEFAULT_DISPLAY, mainExecutor, object : TakeScreenshotCallback {
+                override fun onSuccess(result: ScreenshotResult) {
+                    var ratio: Float? = null
+                    try {
+                        val hw = Bitmap.wrapHardwareBuffer(result.hardwareBuffer, result.colorSpace)
+                        val bmp = hw?.copy(Bitmap.Config.ARGB_8888, false)
+                        hw?.recycle()
+                        if (bmp != null) {
+                            val w = bmp.width
+                            val h = bmp.height
+                            val yStart = (h * 0.88f).toInt()
+                            val yEnd = (h * 0.94f).toInt()
+                            for (y in yStart..yEnd step 2) {
+                                // Check if row starts bright (white or YT red) at x=10..30
+                                var startBright = 0
+                                for (x in 8..32 step 4) {
+                                    val c = bmp.getPixel(x, y)
+                                    val r = Color.red(c); val g = Color.green(c); val b = Color.blue(c)
+                                    if ((r > 190 && g > 190 && b > 190) || (r > 190 && g < 80 && b < 80)) startBright++
+                                }
+                                if (startBright >= 4) {
+                                    var lastX = 0
+                                    for (x in 0 until w step 6) {
+                                        val c = bmp.getPixel(x, y)
+                                        val r = Color.red(c); val g = Color.green(c); val b = Color.blue(c)
+                                        if ((r > 190 && g > 190 && b > 190) || (r > 190 && g < 80 && b < 80)) {
+                                            lastX = x
+                                        } else if (x > lastX + 36) {
+                                            break
+                                        }
+                                    }
+                                    if (lastX > 20) {
+                                        ratio = (lastX.toFloat() / w.toFloat()).coerceIn(0f, 1f)
+                                        break
+                                    }
+                                }
+                            }
+                            bmp.recycle()
+                        }
+                    } catch (_: Exception) {
+                    } finally {
+                        result.hardwareBuffer.close()
+                    }
+                    if (cont.isActive) cont.resume(ratio)
+                }
+
+                override fun onFailure(errorCode: Int) {
+                    if (cont.isActive) cont.resume(null)
+                }
+            })
+        }
     }
 
     fun findEditableId(): Int? {
