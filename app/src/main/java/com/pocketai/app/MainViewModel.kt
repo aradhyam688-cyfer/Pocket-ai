@@ -143,7 +143,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun parseAutomationSteps(input: String): List<AutoStep> {
-        val clauses = input.split(Regex("""(?i)\s*(?:,|\band\b|\bthen\b)\s*"""))
+        val clauses = input.split(Regex("""(?i)\s*(?:,|\band\b|\bthen\b|\s+(?=(?:tap|click|select|search|scroll|back)\b))\s*"""))
             .map { it.trim() }
             .filter { it.isNotEmpty() }
 

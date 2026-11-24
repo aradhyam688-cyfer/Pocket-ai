@@ -1,6 +1,8 @@
 package com.pocketai.app
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
+import android.graphics.Path
 import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
@@ -137,7 +139,26 @@ class PocketAccessibilityService : AccessibilityService() {
             AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
         }
         val ok = target.performAction(action)
-        return if (ok) "Scrolled $dir" else "Cannot scroll $dir"
+        if (ok) return "Scrolled $dir"
+        return swipeGesture(dir)
+    }
+
+
+    private fun swipeGesture(dir: String): String {
+        val dm = resources.displayMetrics
+        val w = dm.widthPixels.toFloat()
+        val h = dm.heightPixels.toFloat()
+        val path = Path()
+        when (dir) {
+            "down" -> { path.moveTo(w * 0.5f, h * 0.72f); path.lineTo(w * 0.5f, h * 0.28f) }
+            "up" -> { path.moveTo(w * 0.5f, h * 0.30f); path.lineTo(w * 0.5f, h * 0.74f) }
+            "right" -> { path.moveTo(w * 0.80f, h * 0.5f); path.lineTo(w * 0.20f, h * 0.5f) }
+            "left" -> { path.moveTo(w * 0.20f, h * 0.5f); path.lineTo(w * 0.80f, h * 0.5f) }
+            else -> return "Cannot scroll $dir"
+        }
+        val stroke = GestureDescription.StrokeDescription(path, 0L, 280L)
+        val ok = dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
+        return if (ok) "Swiped $dir" else "Cannot scroll $dir"
     }
 
     fun scrollDown(): String = scroll("down")

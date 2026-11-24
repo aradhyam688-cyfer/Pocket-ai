@@ -110,7 +110,7 @@ fun PocketAIScreen(vm: MainViewModel = viewModel()) {
         )
     }
 
-    Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
+    Column(modifier = Modifier.fillMaxSize().systemBarsPadding().padding(12.dp)) {
         val header = buildString {
             append("$status • Memories: $memoryCount • ${if (fastAuto) "Fast" else "LLM"}")
             if (isListening) append(" • Listening...")
