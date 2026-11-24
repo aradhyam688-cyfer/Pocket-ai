@@ -106,6 +106,27 @@ class PocketAccessibilityService : AccessibilityService() {
     }
 
 
+
+    fun isShortsAd(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        var found = false
+        val adRegex = Regex("""(?i)^(?:sponsored|ad|skip ads?)(?:\b.*)?$""")
+        fun walk(node: AccessibilityNodeInfo) {
+            if (found) return
+            val t = (node.text ?: "").toString().trim()
+            val d = (node.contentDescription ?: "").toString().trim()
+            if ((t.isNotEmpty() && adRegex.matches(t)) || (d.isNotEmpty() && adRegex.matches(d))) {
+                found = true
+                return
+            }
+            for (i in 0 until node.childCount) {
+                node.getChild(i)?.let { walk(it) }
+            }
+        }
+        walk(root)
+        return found
+    }
+
     fun getShortsProgress(): Float? {
         val root = rootInActiveWindow ?: return null
         var progress: Float? = null

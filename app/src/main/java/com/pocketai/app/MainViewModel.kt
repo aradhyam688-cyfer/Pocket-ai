@@ -386,25 +386,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 is AutoStep.Doomscroll -> {
                     svc.getCompressedScreen()
                     svc.findAndTapByText("Shorts")?.let { appendMessage("Tool", it); delay(1500L) }
-                    appendMessage("Tool", "Watching Shorts (auto-skips at end; tap Stop anytime)...")
-                    for (i in 1..25) {
+                    appendMessage("Tool", "Watching Shorts (skips ads & waits for end; tap Stop anytime)...")
+                    for (i in 1..30) {
                         if (!_isNavigating.value) break
+                        delay(1500L)
+                        if (svc.isShortsAd()) {
+                            appendMessage("Tool", "Skipped ad")
+                            svc.scroll("down")
+                            continue
+                        }
                         var maxSeen = 0f
                         var elapsedMs = 0L
                         var sawProgress = false
                         while (_isNavigating.value && elapsedMs < 65000L) {
+                            if (svc.isShortsAd()) break
                             val p = svc.getShortsProgress()
                             if (p != null) {
                                 sawProgress = true
-                                if (p >= 0.94f || (maxSeen >= 0.75f && p <= 0.15f)) break
+                                if (p >= 0.98f || (maxSeen >= 0.85f && p <= 0.12f)) break
                                 if (p > maxSeen) maxSeen = p
-                            } else if (!sawProgress && elapsedMs >= 20000L) break
+                            } else if (!sawProgress && elapsedMs >= 35000L) break
                             delay(500L)
                             elapsedMs += 500L
                         }
                         if (!_isNavigating.value) break
                         svc.scroll("down")
-                        delay(1200L)
                     }
                 }
                 is AutoStep.TapOrdinal -> {
