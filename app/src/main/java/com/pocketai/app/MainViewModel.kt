@@ -386,7 +386,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 is AutoStep.Doomscroll -> {
                     svc.getCompressedScreen()
                     svc.findAndTapByText("Shorts")?.let { appendMessage("Tool", it); delay(1500L) }
-                    appendMessage("Tool", "Watching Shorts (skips ads & waits for end; tap Stop anytime)...")
+                    appendMessage("Tool", "Watching Shorts (progress-bar mode; tap Stop anytime)...")
                     for (i in 1..30) {
                         if (!_isNavigating.value) break
                         delay(1500L)
@@ -397,15 +397,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         }
                         var maxSeen = 0f
                         var elapsedMs = 0L
-                        var sawProgress = false
-                        while (_isNavigating.value && elapsedMs < 65000L) {
-                            if (svc.isShortsAd()) break
+                        while (_isNavigating.value && elapsedMs < 90000L) {
+                            if (svc.isShortsAd()) {
+                                appendMessage("Tool", "Skipped ad")
+                                break
+                            }
                             val p = svc.getShortsProgress()
                             if (p != null) {
-                                sawProgress = true
-                                if (p >= 0.98f || (maxSeen >= 0.85f && p <= 0.12f)) break
+                                if (p >= 0.97f || (maxSeen >= 0.80f && p <= 0.15f)) break
                                 if (p > maxSeen) maxSeen = p
-                            } else if (!sawProgress && elapsedMs >= 35000L) break
+                            }
                             delay(500L)
                             elapsedMs += 500L
                         }
