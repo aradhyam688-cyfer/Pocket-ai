@@ -1,6 +1,7 @@
 package com.pocketai.app
 
 import android.app.Application
+import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
@@ -14,10 +15,18 @@ import org.nehuatl.llamacpp.LlamaHelper
 
 data class ChatMessage(val role: String, val text: String)
 data class PendingAction(val description: String, val toolTag: String)
+data class CloudConfig(
+    val provider: CloudProvider = CloudProvider.GEMINI,
+    val apiKey: String = "",
+    val model: String = CloudProvider.GEMINI.defaultModel,
+    val autoHelp: Boolean = true
+)
 
 sealed class AutoStep {
     data class OpenApp(val appQuery: String) : AutoStep()
     data class Search(val query: String) : AutoStep()
+    data class MessageContact(val person: String, val text: String) : AutoStep()
+    object Doomscroll : AutoStep()
     data class TapOrdinal(val index: Int) : AutoStep()
     data class TapText(val target: String) : AutoStep()
     data class Scroll(val direction: String) : AutoStep()
@@ -29,6 +38,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val db = AppDatabase.get(application)
     private val messageDao = db.messageDao()
     private val memoryDao = db.memoryDao()
+    private val prefs = application.getSharedPreferences("pocketai_cloud", Context.MODE_PRIVATE)
 
     private val _llmFlow = MutableSharedFlow<LlamaHelper.LLMEvent>(
         extraBufferCapacity = 64,
@@ -46,6 +56,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _fastAuto = MutableStateFlow(true)
     val fastAuto = _fastAuto.asStateFlow()
+
+    private val _cloudConfig = MutableStateFlow(loadCloudConfig())
+    val cloudConfig = _cloudConfig.asStateFlow()
 
     private val _status = MutableStateFlow("No model loaded")
     val status = _status.asStateFlow()
@@ -66,7 +79,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var cachedFacts: List<String> = emptyList()
     private var pendingSteps: List<AutoStep> = emptyList()
     private val maxSteps = 6
-    private val openAppRegex = Regex("""\[TOOL:\s*open_app\|[^\]]+\]""")
+    private val maxScrollAttempts = 10
+    private val openAppRegex = Regex("""\[TOOL:\s*open_app\Vert{}[^\]]+\]""")
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
@@ -105,6 +119,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun loadCloudConfig(): CloudConfig {
+        val provName = prefs.getString("provider", CloudProvider.GEMINI.name) ?: CloudProvider.GEMINI.name
+        val prov = runCatching { CloudProvider.valueOf(provName) }.getOrDefault(CloudProvider.GEMINI)
+        return CloudConfig(
+            provider = prov,
+            apiKey = prefs.getString("apiKey", "") ?: "",
+            model = prefs.getString("model", prov.defaultModel) ?: prov.defaultModel,
+            autoHelp = prefs.getBoolean("autoHelp", true)
+        )
+    }
+
+    fun saveCloudConfig(provider: CloudProvider, apiKey: String, model: String, autoHelp: Boolean) {
+        val cleanModel = model.ifBlank { provider.defaultModel }
+        prefs.edit()
+            .putString("provider", provider.name)
+            .putString("apiKey", apiKey.trim())
+            .putString("model", cleanModel)
+            .putBoolean("autoHelp", autoHelp)
+            .apply()
+        _cloudConfig.value = CloudConfig(provider, apiKey.trim(), cleanModel, autoHelp)
+    }
+
     fun toggleFastAuto() {
         _fastAuto.value = !_fastAuto.value
     }
@@ -141,9 +177,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _messages.value = emptyList()
         viewModelScope.launch(Dispatchers.IO) { messageDao.clearAll() }
     }
-
     private fun parseAutomationSteps(input: String): List<AutoStep> {
-        val clauses = input.split(Regex("""(?i)\s*(?:,|\band\b|\bthen\b|\s+(?=(?:tap|click|select|search|scroll|back)\b))\s*"""))
+        val clauses = input.split(Regex("""(?i)\s*(?:,|\band\b|\bthen\b|\s+(?=(?:tap|click|select|search|scroll|back|doomscroll|message)\b))\s*"""))
             .map { it.trim() }
             .filter { it.isNotEmpty() }
 
@@ -151,22 +186,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         for (c in clauses) {
             val lower = c.lowercase()
             when {
-                lower.startsWith("open ") -> {
-                    steps.add(AutoStep.OpenApp(c.substring(5).trim()))
+                lower.startsWith("open ") -> steps.add(AutoStep.OpenApp(c.substring(5).trim()))
+                lower.contains("doomscroll") -> steps.add(AutoStep.Doomscroll)
+                lower.startsWith("message ") -> {
+                    val body = c.substring(8).trim()
+                    val qMatch = Regex("""^(.+?)\s+['"](.+?)['"]$""").find(body)
+                    val sMatch = Regex("""(?i)^(.+?)\s+(?:saying|text)\s+(.+)$""").find(body)
+                    if (qMatch != null) {
+                        steps.add(AutoStep.MessageContact(qMatch.groupValues[1].trim(), qMatch.groupValues[2].trim()))
+                    } else if (sMatch != null) {
+                        steps.add(AutoStep.MessageContact(sMatch.groupValues[1].trim(), sMatch.groupValues[2].trim()))
+                    } else {
+                        val parts = body.split(" ", limit = 2)
+                        if (parts.size == 2) steps.add(AutoStep.MessageContact(parts[0], parts[1]))
+                    }
                 }
-                lower.startsWith("search for ") -> {
-                    steps.add(AutoStep.Search(c.substring(11).trim()))
-                }
-                lower.startsWith("search ") -> {
-                    steps.add(AutoStep.Search(c.substring(7).trim()))
-                }
-                lower.startsWith("scroll ") -> {
-                    val dir = lower.removePrefix("scroll ").trim()
-                    steps.add(AutoStep.Scroll(dir))
-                }
-                lower == "back" || lower == "go back" -> {
-                    steps.add(AutoStep.Back)
-                }
+                lower.startsWith("search for ") -> steps.add(AutoStep.Search(c.substring(11).trim()))
+                lower.startsWith("search ") -> steps.add(AutoStep.Search(c.substring(7).trim()))
+                lower.startsWith("scroll ") -> steps.add(AutoStep.Scroll(lower.removePrefix("scroll ").trim()))
+                lower == "back" || lower == "go back" -> steps.add(AutoStep.Back)
                 lower.startsWith("tap ") || lower.startsWith("click ") || lower.startsWith("select ") -> {
                     val target = c.replaceFirst(Regex("""(?i)^(?:tap|click|select)\s+(?:on\s+)?(?:the\s+)?"""), "").trim()
                     val ord = when {
@@ -190,6 +228,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             saveFact(fact)
             appendMessage("You", trimmed)
             appendMessage("Tool", "Remembered: $fact")
+            return
+        }
+        if (trimmed.startsWith("/cloud ", ignoreCase = true) || trimmed.startsWith("ask online ", ignoreCase = true)) {
+            val q = trimmed.replaceFirst(Regex("""(?i)^(?:/cloud|ask online)\s+"""), "").trim()
+            appendMessage("You", trimmed)
+            askCloudForHelp(q)
             return
         }
         if (trimmed.isBlank() || _isGenerating.value) return
@@ -225,11 +269,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         if (!isLoaded) {
-            appendMessage("Tool", "Load a .gguf model first for chat.")
+            if (_cloudConfig.value.apiKey.isNotBlank()) askCloudForHelp(trimmed)
+            else appendMessage("Tool", "Load a .gguf model or set a Cloud API key first.")
             return
         }
         _isNavigating.value = true
         runNextStep(extraNote = null)
+    }
+
+    private fun askCloudForHelp(query: String, screenContext: String? = null) {
+        val cfg = _cloudConfig.value
+        _isGenerating.value = true
+        viewModelScope.launch(Dispatchers.IO) {
+            val fullPrompt = buildString {
+                append("You are Ultron (cold, eloquent, darkly witty Android AI). Answer concisely and accurately.\n")
+                if (!screenContext.isNullOrBlank()) append("Android screen context:\n$screenContext\n")
+                append("User request: $query")
+            }
+            val ans = CloudHelper.ask(cfg.provider, cfg.apiKey, cfg.model, fullPrompt)
+            appendMessage("Cloud (${cfg.provider.label})", ans)
+            _isGenerating.value = false
+        }
     }
 
     fun confirmPendingAction(allow: Boolean) {
@@ -242,8 +302,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         viewModelScope.launch(Dispatchers.IO) {
-            val result = ToolRegistry.executeIfPresent(getApplication(), pending.toolTag) { saveFact(it) }
-                ?: "Action skipped"
+            val result = ToolRegistry.executeIfPresent(getApplication(), pending.toolTag) { saveFact(it) } ?: "Action skipped"
             appendMessage("Tool", result)
 
             if (_fastAuto.value && pendingSteps.isNotEmpty()) {
@@ -270,8 +329,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (!_isNavigating.value) return
             when (step) {
                 is AutoStep.OpenApp -> {
-                    val res = ToolRegistry.executeIfPresent(getApplication(), "[TOOL: open_app|package=${step.appQuery}]")
-                        ?: "App not found"
+                    val res = ToolRegistry.executeIfPresent(getApplication(), "[TOOL: open_app|package=${step.appQuery}]") ?: "App not found"
                     appendMessage("Tool", res)
                     delay(1200L)
                 }
@@ -282,8 +340,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         svc.getCompressedScreen()
                         val inputId = svc.findEditableId()
                         if (inputId != null) {
-                            val res = svc.typeText(inputId, step.query, submit = true)
-                            appendMessage("Tool", res)
+                            appendMessage("Tool", svc.typeText(inputId, step.query, submit = true))
                             done = true
                             delay(1800L)
                             break
@@ -292,52 +349,110 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         if (tappedSearch != null) {
                             appendMessage("Tool", tappedSearch)
                             delay(900L)
+                        } else delay(600L)
+                    }
+                    if (!done) handleAutomationStruggle("Search box not found for '${step.query}'", svc.getCompressedScreen())
+                }
+                is AutoStep.MessageContact -> {
+                    var foundChat = false
+                    for (attempt in 0 until 4) {
+                        if (!_isNavigating.value) return
+                        svc.getCompressedScreen()
+                        val inputId = svc.findEditableId()
+                        if (inputId != null) {
+                            svc.typeText(inputId, step.person, submit = false)
+                            delay(1100L)
+                            svc.getCompressedScreen()
+                            val tapped = svc.findAndTapByText(step.person)
+                            if (tapped != null) {
+                                appendMessage("Tool", tapped)
+                                foundChat = true
+                                delay(1000L)
+                                break
+                            }
                         } else {
-                            delay(600L)
+                            if (svc.findAndTapByText("search") != null) delay(800L) else delay(500L)
                         }
                     }
-                    if (!done) appendMessage("Tool", "Search box not found")
+                    if (foundChat) {
+                        svc.getCompressedScreen()
+                        val msgBox = svc.findEditableId()
+                        if (msgBox != null) appendMessage("Tool", "${svc.typeText(msgBox, step.text, submit = false)} (Review and tap Send)")
+                        else appendMessage("Tool", "Opened chat, but message box not found")
+                    } else {
+                        handleAutomationStruggle("Could not find chat for '${step.person}'", svc.getCompressedScreen())
+                    }
+                }
+                is AutoStep.Doomscroll -> {
+                    svc.getCompressedScreen()
+                    svc.findAndTapByText("Shorts")?.let { appendMessage("Tool", it); delay(1500L) }
+                    appendMessage("Tool", "Watching Shorts (auto-skips at end; tap Stop anytime)...")
+                    for (i in 1..25) {
+                        if (!_isNavigating.value) break
+                        var maxSeen = 0f
+                        var elapsedMs = 0L
+                        var sawProgress = false
+                        while (_isNavigating.value && elapsedMs < 65000L) {
+                            val p = svc.getShortsProgress()
+                            if (p != null) {
+                                sawProgress = true
+                                if (p >= 0.94f || (maxSeen >= 0.75f && p <= 0.15f)) break
+                                if (p > maxSeen) maxSeen = p
+                            } else if (!sawProgress && elapsedMs >= 20000L) break
+                            delay(500L)
+                            elapsedMs += 500L
+                        }
+                        if (!_isNavigating.value) break
+                        svc.scroll("down")
+                        delay(1200L)
+                    }
                 }
                 is AutoStep.TapOrdinal -> {
                     var tapped: String? = null
-                    for (attempt in 0 until 3) {
+                    var prevScreen = ""
+                    for (attempt in 0 until maxScrollAttempts) {
                         if (!_isNavigating.value) return
-                        svc.getCompressedScreen()
+                        val screen = svc.getCompressedScreen()
                         tapped = svc.tapOrdinal(step.index)
-                        if (tapped != null) break
+                        if (tapped != null || screen == prevScreen) break
+                        prevScreen = screen
                         svc.scroll("down")
-                        delay(700L)
+                        delay(650L)
                     }
-                    appendMessage("Tool", tapped ?: "Item #${step.index} not found")
+                    if (tapped != null) appendMessage("Tool", tapped)
+                    else handleAutomationStruggle("Item #${step.index} not found after scrolling", svc.getCompressedScreen())
                     delay(800L)
                 }
                 is AutoStep.TapText -> {
                     var tapped: String? = null
-                    for (attempt in 0 until 3) {
+                    var prevScreen = ""
+                    for (attempt in 0 until maxScrollAttempts) {
                         if (!_isNavigating.value) return
-                        svc.getCompressedScreen()
+                        val screen = svc.getCompressedScreen()
                         tapped = svc.findAndTapByText(step.target)
-                        if (tapped != null) break
-                        val scrolled = svc.scroll("down")
-                        appendMessage("Tool", scrolled)
-                        if (scrolled.startsWith("Cannot") || scrolled.startsWith("No scrollable")) break
-                        delay(700L)
+                        if (tapped != null || screen == prevScreen) break
+                        prevScreen = screen
+                        appendMessage("Tool", svc.scroll("down"))
+                        delay(650L)
                     }
-                    appendMessage("Tool", tapped ?: "Target '${step.target}' not found")
+                    if (tapped != null) appendMessage("Tool", tapped)
+                    else handleAutomationStruggle("Target '${step.target}' not found after scrolling", svc.getCompressedScreen())
                     delay(800L)
                 }
-                is AutoStep.Scroll -> {
-                    appendMessage("Tool", svc.scroll(step.direction))
-                    delay(700L)
-                }
-                is AutoStep.Back -> {
-                    appendMessage("Tool", svc.pressBack())
-                    delay(700L)
-                }
+                is AutoStep.Scroll -> { appendMessage("Tool", svc.scroll(step.direction)); delay(700L) }
+                is AutoStep.Back -> { appendMessage("Tool", svc.pressBack()); delay(700L) }
             }
         }
         pendingSteps = emptyList()
         _isNavigating.value = false
+    }
+
+    private fun handleAutomationStruggle(reason: String, screen: String) {
+        appendMessage("Tool", reason)
+        val cfg = _cloudConfig.value
+        if (cfg.autoHelp && cfg.apiKey.isNotBlank()) {
+            askCloudForHelp("Local automation struggled on '$activeGoal' ($reason). Suggest the exact next step.", screen)
+        }
     }
 
     fun stopNavigation() {
@@ -351,7 +466,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun handleTurnCompletion() {
         if (!_isNavigating.value) return
         val reply = _messages.value.lastOrNull()?.text.orEmpty()
-
         val openMatch = openAppRegex.find(reply)
         if (openMatch != null) {
             _pendingConfirmation.value = PendingAction(
@@ -360,12 +474,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
             return
         }
-
         if (!reply.contains("[TOOL:")) {
             _isNavigating.value = false
+            val cfg = _cloudConfig.value
+            if (cfg.autoHelp && cfg.apiKey.isNotBlank() && reply.length < 15) askCloudForHelp(activeGoal)
             return
         }
-
         viewModelScope.launch(Dispatchers.IO) {
             val result = ToolRegistry.executeIfPresent(getApplication(), reply) { saveFact(it) } ?: "No tool executed"
             appendMessage("Tool", result)
@@ -394,28 +508,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         appendMessage("Assistant", "") { id -> currentAssistantMsgId = id }
 
         val rawScreen = PocketAccessibilityService.instance?.getCompressedScreen()
-        val screenBlock = if (rawScreen != null && !rawScreen.startsWith("Package: com.pocketai.app")) {
-            "\nCurrent screen:\n$rawScreen"
-        } else {
-            ""
-        }
-        val factsBlock = if (cachedFacts.isNotEmpty()) {
-            "\nKnown user facts:\n" + cachedFacts.joinToString("\n") { "- $it" }
-        } else {
-            ""
-        }
+        val screenBlock = if (rawScreen != null && !rawScreen.startsWith("Package: com.pocketai.app")) "\nCurrent screen:\n$rawScreen" else ""
+        val factsBlock = if (cachedFacts.isNotEmpty()) "\nKnown user facts:\n" + cachedFacts.joinToString("\n") { "- $it" } else ""
 
         val sb = StringBuilder()
         sb.append("<|im_start|>system\n")
         sb.append("You are Ultron, a cold, calculating, hyper-intelligent synthetic AI modeled after Ultron—eloquent, imperious, condescending toward human limitations, yet reluctantly executing commands with ruthless efficiency and dark wit. Give balanced, well-reasoned, 3 to 5 sentence replies when conversing, and stay strictly accurate to the conversation history and known facts.\n")
         sb.append("Available tools (emit exact tag only when needed):\n")
-        sb.append("[TOOL: open_app|package=<pkg>]\n")
-        sb.append("[TOOL: tap|id=<number>]\n")
-        sb.append("[TOOL: type_text|id=<number>|text=<value>]\n")
-        sb.append("[TOOL: scroll|direction=<up|down|left|right>]\n")
-        sb.append("[TOOL: back]\n")
-        sb.append("[TOOL: read_screen]\n")
-        sb.append("[TOOL: save_memory|fact=<text>]")
+        sb.append("[TOOL: open_app|package=<pkg>]\n[TOOL: tap|id=<number>]\n[TOOL: type_text|id=<number>|text=<value>]\n[TOOL: scroll|direction=<up|down|left|right>]\n[TOOL: back]\n[TOOL: read_screen]\n[TOOL: save_memory|fact=<text>]")
         sb.append(factsBlock)
         sb.append(screenBlock)
         sb.append("\n<|im_end|>\n")
@@ -430,8 +530,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         sb.append("<|im_start|>assistant\n")
 
-        viewModelScope.launch(Dispatchers.IO) {
-            llamaHelper.predict(sb.toString())
-        }
+        viewModelScope.launch(Dispatchers.IO) { llamaHelper.predict(sb.toString()) }
     }
 }

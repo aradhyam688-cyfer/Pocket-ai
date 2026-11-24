@@ -105,6 +105,25 @@ class PocketAccessibilityService : AccessibilityService() {
         return if (ok) "Tapped #$oneBasedIndex \"$preview\"" else "Failed to tap #$oneBasedIndex"
     }
 
+
+    fun getShortsProgress(): Float? {
+        val root = rootInActiveWindow ?: return null
+        var progress: Float? = null
+        fun walk(node: AccessibilityNodeInfo) {
+            if (progress != null) return
+            val range = node.rangeInfo
+            if (range != null && range.max > range.min) {
+                progress = ((range.current - range.min) / (range.max - range.min)).coerceIn(0f, 1f)
+                return
+            }
+            for (i in 0 until node.childCount) {
+                node.getChild(i)?.let { walk(it) }
+            }
+        }
+        walk(root)
+        return progress
+    }
+
     fun findEditableId(): Int? {
         return nodeMap.entries.firstOrNull { it.value.second.isEditable }?.key
     }
