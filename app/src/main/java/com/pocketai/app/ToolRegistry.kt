@@ -40,6 +40,10 @@ object ToolRegistry {
                 svc?.typeText(id, text, submit) ?: "Accessibility service not enabled"
             }
             "back" -> svc?.pressBack() ?: "Accessibility service not enabled"
+            "scroll" -> {
+                val dir = args["direction"] ?: args["dir"] ?: "down"
+                svc?.scroll(dir) ?: "Accessibility service not enabled"
+            }
             "save_memory" -> {
                 val fact = args["fact"] ?: return "Missing fact"
                 onSaveMemory?.invoke(fact)

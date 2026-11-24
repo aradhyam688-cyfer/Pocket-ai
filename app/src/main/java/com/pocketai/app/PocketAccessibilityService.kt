@@ -90,17 +90,61 @@ class PocketAccessibilityService : AccessibilityService() {
         return nodeMap.entries.firstOrNull { it.value.second.isEditable }?.key
     }
 
+    fun scroll(direction: String): String {
+        val root = rootInActiveWindow ?: return "Screen: unavailable"
+        val scrollables = mutableListOf<AccessibilityNodeInfo>()
+        fun collect(node: AccessibilityNodeInfo) {
+            if (node.isScrollable) scrollables.add(node)
+            for (i in 0 until node.childCount) {
+                node.getChild(i)?.let { collect(it) }
+            }
+        }
+        collect(root)
+        val rect = android.graphics.Rect()
+        val dir = direction.lowercase().trim()
+        val wantHorizontal = (dir == "left" || dir == "right")
+        val target = scrollables
+            .filter {
+                it.getBoundsInScreen(rect)
+                if (wantHorizontal) rect.width() > rect.height() else rect.height() > rect.width()
+            }
+            .maxByOrNull {
+                it.getBoundsInScreen(rect)
+                rect.width() * rect.height()
+            } ?: scrollables.firstOrNull()
+            ?: return "No scrollable view found"
+
+        val action = if (dir == "up" || dir == "left") {
+            AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+        } else {
+            AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+        }
+        val ok = target.performAction(action)
+        return if (ok) "Scrolled $dir" else "Cannot scroll $dir"
+    }
+
     fun scrollDown(): String {
         val root = rootInActiveWindow ?: return "Screen: unavailable"
-        fun findScrollable(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-            if (node.isScrollable) return node
+        val scrollables = mutableListOf<AccessibilityNodeInfo>()
+        fun collect(node: AccessibilityNodeInfo) {
+            if (node.isScrollable) scrollables.add(node)
             for (i in 0 until node.childCount) {
-                node.getChild(i)?.let { findScrollable(it)?.let { s -> return s } }
+                node.getChild(i)?.let { collect(it) }
             }
-            return null
         }
-        val target = findScrollable(root) ?: return "No scrollable view found"
-        val ok = target.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+        collect(root)
+        val rect = android.graphics.Rect()
+        val vertical = scrollables
+            .filter {
+                it.getBoundsInScreen(rect)
+                rect.height() > rect.width()
+            }
+            .maxByOrNull {
+                it.getBoundsInScreen(rect)
+                rect.width() * rect.height()
+            } ?: scrollables.firstOrNull()
+            ?: return "No scrollable view found"
+        val ok = vertical.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
         return if (ok) "Scrolled down" else "Reached bottom"
     }
 
