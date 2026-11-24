@@ -80,7 +80,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var pendingSteps: List<AutoStep> = emptyList()
     private val maxSteps = 6
     private val maxScrollAttempts = 10
-    private val openAppRegex = Regex("""\[TOOL:\s*open_app\Vert{}[^\]]+\]""")
+    private val openAppRegex = Regex("""\[TOOL:\s*open_app|[^\]]+\]""")
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
