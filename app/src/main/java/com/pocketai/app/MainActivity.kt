@@ -25,9 +25,30 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val prefs = getSharedPreferences("pocketai_crash", MODE_PRIVATE)
+        val prevHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { t, e ->
+            prefs.edit().putString("last_crash", android.util.Log.getStackTraceString(e)).apply()
+            prevHandler?.uncaughtException(t, e)
+        }
+        val crash = prefs.getString("last_crash", null)
         setContent {
             MaterialTheme {
-                PocketAIScreen()
+                var showCrash by remember { mutableStateOf(crash) }
+                if (showCrash != null) {
+                    Column(modifier = Modifier.fillMaxSize().systemBarsPadding().padding(12.dp)) {
+                        Button(onClick = {
+                            prefs.edit().remove("last_crash").apply()
+                            showCrash = null
+                        }) { Text("Clear & Retry") }
+                        Spacer(Modifier.height(8.dp))
+                        androidx.compose.foundation.lazy.LazyColumn {
+                            item { Text(showCrash ?: "") }
+                        }
+                    }
+                } else {
+                    PocketAIScreen()
+                }
             }
         }
     }
