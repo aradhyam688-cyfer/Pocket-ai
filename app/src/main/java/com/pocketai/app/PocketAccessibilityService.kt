@@ -1,6 +1,16 @@
 package com.pocketai.app
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Context
+import android.graphics.PixelFormat
+import android.os.Handler
+import android.os.Looper
+import android.view.Gravity
+import android.view.View
+import android.view.WindowManager
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.TextView
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
 import android.graphics.Bitmap
@@ -17,6 +27,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 class PocketAccessibilityService : AccessibilityService() {
 
     private val nodeMap = mutableMapOf<Int, Pair<String, AccessibilityNodeInfo>>()
+    private var overlayView: View? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -27,7 +38,71 @@ class PocketAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {}
 
+
+    fun showFloatingChoices(
+        choices: List<UiElement>,
+        onPick: (UiElement) -> Unit,
+        onCancel: () -> Unit
+    ) {
+        Handler(Looper.getMainLooper()).post {
+            removeFloatingChoices()
+            val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            val box = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setBackgroundColor(Color.parseColor("#EE1E1E24"))
+                setPadding(36, 28, 36, 28)
+            }
+            val title = TextView(this).apply {
+                text = "PocketAI: Pick one"
+                setTextColor(Color.WHITE)
+                textSize = 16f
+                setPadding(0, 0, 0, 16)
+            }
+            box.addView(title)
+            for (el in choices) {
+                val btn = Button(this).apply {
+                    text = el.displayLabel.take(45)
+                    setOnClickListener {
+                        removeFloatingChoices()
+                        onPick(el)
+                    }
+                }
+                box.addView(btn)
+            }
+            val cancelBtn = Button(this).apply {
+                text = "Cancel"
+                setOnClickListener {
+                    removeFloatingChoices()
+                    onCancel()
+                }
+            }
+            box.addView(cancelBtn)
+
+            val params = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.CENTER
+            }
+            overlayView = box
+            wm.addView(box, params)
+        }
+    }
+
+    fun removeFloatingChoices() {
+        val v = overlayView ?: return
+        overlayView = null
+        try {
+            val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            wm.removeView(v)
+        } catch (_: Exception) {}
+    }
+
     override fun onDestroy() {
+        removeFloatingChoices()
         instance = null
         super.onDestroy()
     }
@@ -125,9 +200,12 @@ class PocketAccessibilityService : AccessibilityService() {
         return if (ok) "Tapped [$id] \"${entry.first}\"" else "Failed to tap [$id]"
     }
 
-    fun findAndTapByText(target: String, skipEditable: Boolean = false): String? {
+    fun findAndTapByText(target: String, skipEditable: Boolean = false, excludeText: String = ""): String? {
         val tNorm = norm(target)
-        val pool = (if (skipEditable) nodeMap.entries.filter { !it.value.second.isEditable } else nodeMap.entries).filter { !isNoiseOrLink(it.value.first) }
+        val exNorm = norm(excludeText)
+        val pool = (if (skipEditable) nodeMap.entries.filter { !it.value.second.isEditable } else nodeMap.entries)
+            .filter { !isNoiseOrLink(it.value.first) }
+            .filter { exNorm.isEmpty() || norm(it.value.first) != exNorm }
         val exact = pool.firstOrNull { norm(it.value.first).contains(tNorm) }
         val tokens = target.lowercase().split(Regex("\\s+")).filter { it.length >= 2 }
         val chosen = exact ?: if (tokens.isNotEmpty()) {

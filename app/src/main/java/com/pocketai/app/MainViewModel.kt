@@ -74,6 +74,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var stepCount = 0
     private var lastToolTag = ""
     private var consecutiveFailures = 0
+        lastSearchQuery = ""
+    private var lastSearchQuery = ""
     private var currentAssistantMsgId: Long? = null
     private var cachedFacts: List<String> = emptyList()
     private val maxSteps = 6
@@ -443,6 +445,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     svc.getCompressedScreen()
                     val inputId = svc.findEditableId()
                     if (inputId != null) {
+                        lastSearchQuery = step.target
                         val res = svc.typeText(inputId, step.target, submit = true)
                         appendMessage("Tool", res)
                         delay(1800L)
@@ -514,7 +517,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 for (attempt in 0 until 3) {
                     if (!_isNavigating.value) return false to "Cancelled"
                     val screen = svc.getCompressedScreen()
-                    svc.findAndTapByText(step.target)?.let { appendMessage("Tool", it); return true to it }
+                    svc.findAndTapByText(step.target, skipEditable = true, excludeText = lastSearchQuery)?.let { appendMessage("Tool", it); return true to it }
                     if (screen == prev) break
                     prev = screen; appendMessage("Tool", svc.scroll("down")); delay(650L)
                 }
@@ -542,6 +545,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     updateTask { it.copy(status = TaskStatus.WAITING_CONFIRMATION) }
                     _choicePrompt.value = matches
+                    svc.showFloatingChoices(
+                        choices = matches,
+                        onPick = { picked -> selectChoice(picked) },
+                        onCancel = { dismissChoices() }
+                    )
                     return false
                 }
                 val tapped = svc.findAndTapByText(query, skipEditable = true)
