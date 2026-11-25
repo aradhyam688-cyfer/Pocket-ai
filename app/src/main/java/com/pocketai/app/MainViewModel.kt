@@ -184,6 +184,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun clearChat() {
         _messages.value = emptyList()
         viewModelScope.launch(Dispatchers.IO) { messageDao.clearAll() }
+    }
+
     private fun buildPlan(input: String): List<PlannedStep> {
         val clauses = input.split(Regex("""(?i)\s*(?:,|\band\b|\bthen\b|\s+(?=(?:tap|click|select|search|scroll|back|doomscroll|message)\b))\s*"""))
             .map { it.trim() }
