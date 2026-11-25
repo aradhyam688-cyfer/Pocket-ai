@@ -491,7 +491,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (inputId != null) {
                 svc.typeText(inputId, query, submit = false)
                 delay(1100L); svc.getCompressedScreen()
-                val tapped = svc.findAndTapByText(query)
+                val tapped = svc.findAndTapByText(query, skipEditable = true)
                 if (tapped != null) { appendMessage("Tool", tapped); delay(900L); return true }
             } else {
                 if (svc.findAndTapByText("search") != null) delay(800L) else delay(500L)

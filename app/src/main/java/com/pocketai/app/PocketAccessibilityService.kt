@@ -85,12 +85,13 @@ class PocketAccessibilityService : AccessibilityService() {
         return if (ok) "Tapped [$id] \"${entry.first}\"" else "Failed to tap [$id]"
     }
 
-    fun findAndTapByText(target: String): String? {
+    fun findAndTapByText(target: String, skipEditable: Boolean = false): String? {
         val tNorm = norm(target)
-        val exact = nodeMap.entries.firstOrNull { norm(it.value.first).contains(tNorm) }
+        val pool = if (skipEditable) nodeMap.entries.filter { !it.value.second.isEditable } else nodeMap.entries
+        val exact = pool.firstOrNull { norm(it.value.first).contains(tNorm) }
         val tokens = target.lowercase().split(Regex("\\s+")).filter { it.length >= 2 }
         val chosen = exact ?: if (tokens.isNotEmpty()) {
-            nodeMap.entries
+            pool
                 .map { entry ->
                     val labelLower = entry.value.first.lowercase()
                     val score = tokens.count { labelLower.contains(it) }
