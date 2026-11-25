@@ -68,6 +68,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var isLoaded = false
     private var activeGoal = ""
     private var stepCount = 0
+    private var lastToolTag = ""
+    private var consecutiveFailures = 0
     private var currentAssistantMsgId: Long? = null
     private var cachedFacts: List<String> = emptyList()
     private val maxSteps = 6
@@ -248,6 +250,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (trimmed.isBlank() || _isGenerating.value) return
         activeGoal = trimmed
         stepCount = 0
+        lastToolTag = ""
+        consecutiveFailures = 0
         appendMessage("You", trimmed)
 
         if (_fastAuto.value) {
@@ -539,9 +543,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (cfg.autoHelp && cfg.apiKey.isNotBlank() && reply.length < 15) askCloudForHelp(activeGoal)
             return
         }
+        val tagMatch = Regex("""\[TOOL:[^\]]+\]""").find(reply)?.value.orEmpty()
+        if (tagMatch.isNotEmpty() && tagMatch == lastToolTag) {
+            _isNavigating.value = false
+            appendMessage("Tool", "Stopped: repeated the same action ($tagMatch)")
+            return
+        }
+        lastToolTag = tagMatch
+
         viewModelScope.launch(Dispatchers.IO) {
             val result = ToolRegistry.executeIfPresent(getApplication(), reply) { saveFact(it) } ?: "No tool executed"
-            appendMessage("Tool", result); continueLoopAfterTool(result, waitMs = 800L)
+            appendMessage("Tool", result)
+            val isFail = result.startsWith("Error") || result.startsWith("Failed") ||
+                result.startsWith("App not found") || result.startsWith("Unknown tool") ||
+                result.startsWith("Cannot") || result.contains("not enabled")
+            consecutiveFailures = if (isFail) consecutiveFailures + 1 else 0
+            if (consecutiveFailures >= 2) {
+                _isNavigating.value = false
+                handleAutomationStruggle("Stopped after 2 failed attempts ($result)", PocketAccessibilityService.instance?.getCompressedScreen() ?: "")
+                return@launch
+            }
+            continueLoopAfterTool(result, waitMs = 800L)
         }
     }
 
