@@ -22,22 +22,12 @@ data class CloudConfig(
     val autoHelp: Boolean = true
 )
 
-sealed class AutoStep {
-    data class OpenApp(val appQuery: String) : AutoStep()
-    data class Search(val query: String) : AutoStep()
-    data class MessageContact(val person: String, val text: String) : AutoStep()
-    object Doomscroll : AutoStep()
-    data class TapOrdinal(val index: Int) : AutoStep()
-    data class TapText(val target: String) : AutoStep()
-    data class Scroll(val direction: String) : AutoStep()
-    object Back : AutoStep()
-}
-
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val db = AppDatabase.get(application)
     private val messageDao = db.messageDao()
     private val memoryDao = db.memoryDao()
+    private val taskDao = db.taskDao()
     private val prefs = application.getSharedPreferences("pocketai_cloud", Context.MODE_PRIVATE)
 
     private val _llmFlow = MutableSharedFlow<LlamaHelper.LLMEvent>(
@@ -60,6 +50,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _cloudConfig = MutableStateFlow(loadCloudConfig())
     val cloudConfig = _cloudConfig.asStateFlow()
 
+    private val _activeTask = MutableStateFlow<AgentTask?>(null)
+    val activeTask = _activeTask.asStateFlow()
+
     private val _status = MutableStateFlow("No model loaded")
     val status = _status.asStateFlow()
 
@@ -77,10 +70,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var stepCount = 0
     private var currentAssistantMsgId: Long? = null
     private var cachedFacts: List<String> = emptyList()
-    private var pendingSteps: List<AutoStep> = emptyList()
     private val maxSteps = 6
-    private val maxScrollAttempts = 10
-    private val openAppRegex = Regex("""\[TOOL:\s*open_app|[^\]]+\]""")
+    private val openAppRegex = Regex("""\[TOOL:\s*open_app\|[^\]]+\]""")
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
@@ -119,6 +110,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun updateTask(transform: (AgentTask) -> AgentTask) {
+        val current = _activeTask.value ?: return
+        val updated = transform(current)
+        _activeTask.value = updated
+        viewModelScope.launch(Dispatchers.IO) {
+            taskDao.upsert(
+                TaskEntity(
+                    id = updated.id,
+                    instruction = updated.originalInstruction,
+                    objective = updated.objective,
+                    status = updated.status.name,
+                    currentStep = updated.currentStepIndex,
+                    totalSteps = updated.plan.size,
+                    lastObservation = updated.observations.lastOrNull() ?: ""
+                )
+            )
+        }
+    }
+
     private fun loadCloudConfig(): CloudConfig {
         val provName = prefs.getString("provider", CloudProvider.GEMINI.name) ?: CloudProvider.GEMINI.name
         val prov = runCatching { CloudProvider.valueOf(provName) }.getOrDefault(CloudProvider.GEMINI)
@@ -141,9 +151,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _cloudConfig.value = CloudConfig(provider, apiKey.trim(), cleanModel, autoHelp)
     }
 
-    fun toggleFastAuto() {
-        _fastAuto.value = !_fastAuto.value
-    }
+    fun toggleFastAuto() { _fastAuto.value = !_fastAuto.value }
 
     fun loadModel(uriString: String) {
         _status.value = "Loading model..."
@@ -176,45 +184,44 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun clearChat() {
         _messages.value = emptyList()
         viewModelScope.launch(Dispatchers.IO) { messageDao.clearAll() }
-    }
-    private fun parseAutomationSteps(input: String): List<AutoStep> {
+    private fun buildPlan(input: String): List<PlannedStep> {
         val clauses = input.split(Regex("""(?i)\s*(?:,|\band\b|\bthen\b|\s+(?=(?:tap|click|select|search|scroll|back|doomscroll|message)\b))\s*"""))
             .map { it.trim() }
             .filter { it.isNotEmpty() }
 
-        val steps = mutableListOf<AutoStep>()
+        val steps = mutableListOf<PlannedStep>()
         for (c in clauses) {
             val lower = c.lowercase()
             when {
-                lower.startsWith("open ") -> steps.add(AutoStep.OpenApp(c.substring(5).trim()))
-                lower.contains("doomscroll") -> steps.add(AutoStep.Doomscroll)
+                lower.startsWith("open ") -> steps.add(PlannedStep(TaskAction.OPEN_APP, target = c.substring(5).trim()))
+                lower.contains("doomscroll") -> steps.add(PlannedStep(TaskAction.DOOMSCROLL))
                 lower.startsWith("message ") -> {
                     val body = c.substring(8).trim()
                     val qMatch = Regex("""^(.+?)\s+['"](.+?)['"]$""").find(body)
                     val sMatch = Regex("""(?i)^(.+?)\s+(?:saying|text)\s+(.+)$""").find(body)
                     if (qMatch != null) {
-                        steps.add(AutoStep.MessageContact(qMatch.groupValues[1].trim(), qMatch.groupValues[2].trim()))
+                        steps.add(PlannedStep(TaskAction.MESSAGE_CONTACT, qMatch.groupValues[1].trim(), qMatch.groupValues[2].trim()))
                     } else if (sMatch != null) {
-                        steps.add(AutoStep.MessageContact(sMatch.groupValues[1].trim(), sMatch.groupValues[2].trim()))
+                        steps.add(PlannedStep(TaskAction.MESSAGE_CONTACT, sMatch.groupValues[1].trim(), sMatch.groupValues[2].trim()))
                     } else {
                         val parts = body.split(" ", limit = 2)
-                        if (parts.size == 2) steps.add(AutoStep.MessageContact(parts[0], parts[1]))
+                        if (parts.size == 2) steps.add(PlannedStep(TaskAction.MESSAGE_CONTACT, parts[0], parts[1]))
                     }
                 }
-                lower.startsWith("search for ") -> steps.add(AutoStep.Search(c.substring(11).trim()))
-                lower.startsWith("search ") -> steps.add(AutoStep.Search(c.substring(7).trim()))
-                lower.startsWith("scroll ") -> steps.add(AutoStep.Scroll(lower.removePrefix("scroll ").trim()))
-                lower == "back" || lower == "go back" -> steps.add(AutoStep.Back)
+                lower.startsWith("search for ") -> steps.add(PlannedStep(TaskAction.SEARCH, target = c.substring(11).trim()))
+                lower.startsWith("search ") -> steps.add(PlannedStep(TaskAction.SEARCH, target = c.substring(7).trim()))
+                lower.startsWith("scroll ") -> steps.add(PlannedStep(TaskAction.SCROLL, target = lower.removePrefix("scroll ").trim()))
+                lower == "back" || lower == "go back" -> steps.add(PlannedStep(TaskAction.BACK))
                 lower.startsWith("tap ") || lower.startsWith("click ") || lower.startsWith("select ") -> {
                     val target = c.replaceFirst(Regex("""(?i)^(?:tap|click|select)\s+(?:on\s+)?(?:the\s+)?"""), "").trim()
                     val ord = when {
-                        Regex("""(?i)\b(first|1st)\b""").containsMatchIn(target) -> 1
-                        Regex("""(?i)\b(second|2nd)\b""").containsMatchIn(target) -> 2
-                        Regex("""(?i)\b(third|3rd)\b""").containsMatchIn(target) -> 3
+                        Regex("""(?i)\b(first|1st)\b""").containsMatchIn(target) -> "1"
+                        Regex("""(?i)\b(second|2nd)\b""").containsMatchIn(target) -> "2"
+                        Regex("""(?i)\b(third|3rd)\b""").containsMatchIn(target) -> "3"
                         else -> null
                     }
-                    if (ord != null) steps.add(AutoStep.TapOrdinal(ord))
-                    else if (target.isNotEmpty()) steps.add(AutoStep.TapText(target))
+                    if (ord != null) steps.add(PlannedStep(TaskAction.TAP_ORDINAL, target = ord))
+                    else if (target.isNotEmpty()) steps.add(PlannedStep(TaskAction.TAP_TARGET, target = target))
                 }
             }
         }
@@ -242,29 +249,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         appendMessage("You", trimmed)
 
         if (_fastAuto.value) {
-            val steps = parseAutomationSteps(trimmed)
-            if (steps.isNotEmpty()) {
-                _isNavigating.value = true
-                val first = steps.first()
-                if (first is AutoStep.OpenApp) {
-                    pendingSteps = steps.drop(1)
-                    val resolved = ToolRegistry.resolveFallbackApp(getApplication(), "open ${first.appQuery}")
-                    if (resolved != null) {
-                        val (label, pkg) = resolved
-                        _pendingConfirmation.value = PendingAction(
-                            description = "Allow Ultron to open $label ($pkg)?",
-                            toolTag = "[TOOL: open_app|package=$pkg]"
-                        )
-                    } else {
-                        appendMessage("Tool", "App not found: ${first.appQuery}")
-                        _isNavigating.value = false
-                    }
-                    return
-                } else {
-                    pendingSteps = steps
-                    viewModelScope.launch(Dispatchers.IO) { runFastAutomationQueue() }
+            val rawPlan = buildPlan(trimmed)
+            if (rawPlan.isNotEmpty()) {
+                val validation = PlanValidator.validate(rawPlan)
+                if (!validation.isValid) {
+                    appendMessage("Tool", "Plan rejected: ${validation.error}")
                     return
                 }
+                val task = AgentTask(
+                    originalInstruction = trimmed,
+                    objective = "Execute ${validation.validatedPlan.size}-step workflow",
+                    plan = validation.validatedPlan,
+                    status = TaskStatus.RUNNING
+                )
+                _activeTask.value = task
+                _isNavigating.value = true
+                viewModelScope.launch(Dispatchers.IO) { executeCurrentTask() }
+                return
             }
         }
 
@@ -277,19 +278,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         runNextStep(extraNote = null)
     }
 
-    private fun askCloudForHelp(query: String, screenContext: String? = null) {
-        val cfg = _cloudConfig.value
-        _isGenerating.value = true
-        viewModelScope.launch(Dispatchers.IO) {
-            val fullPrompt = buildString {
-                append("You are Ultron (cold, eloquent, darkly witty Android AI). Answer concisely and accurately.\n")
-                if (!screenContext.isNullOrBlank()) append("Android screen context:\n$screenContext\n")
-                append("User request: $query")
-            }
-            val ans = CloudHelper.ask(cfg.provider, cfg.apiKey, cfg.model, fullPrompt)
-            appendMessage("Cloud (${cfg.provider.label})", ans)
-            _isGenerating.value = false
-        }
+    fun pauseTask() {
+        updateTask { it.copy(status = TaskStatus.PAUSED, history = it.history + "Paused by user") }
+        _isNavigating.value = false
+    }
+
+    fun resumeTask() {
+        val task = _activeTask.value ?: return
+        if (task.status != TaskStatus.PAUSED) return
+        updateTask { it.copy(status = TaskStatus.RUNNING, history = it.history + "Resumed") }
+        _isNavigating.value = true
+        viewModelScope.launch(Dispatchers.IO) { executeCurrentTask() }
     }
 
     fun confirmPendingAction(allow: Boolean) {
@@ -297,7 +296,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _pendingConfirmation.value = null
         if (!allow) {
             _isNavigating.value = false
-            pendingSteps = emptyList()
+            updateTask { it.copy(status = TaskStatus.CANCELLED, history = it.history + "Denied by user") }
             appendMessage("Tool", "Cancelled by user")
             return
         }
@@ -305,9 +304,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val result = ToolRegistry.executeIfPresent(getApplication(), pending.toolTag) { saveFact(it) } ?: "Action skipped"
             appendMessage("Tool", result)
 
-            if (_fastAuto.value && pendingSteps.isNotEmpty()) {
+            val task = _activeTask.value
+            if (task != null && task.status == TaskStatus.WAITING_CONFIRMATION) {
+                val ok = !result.startsWith("App not found") && !result.startsWith("Cannot launch")
+                if (!ok) {
+                    updateTask { it.copy(status = TaskStatus.FAILED, observations = it.observations + result) }
+                    _isNavigating.value = false
+                    return@launch
+                }
+                updateTask {
+                    it.copy(
+                        currentStepIndex = it.currentStepIndex + 1,
+                        status = TaskStatus.RUNNING,
+                        observations = it.observations + result,
+                        history = it.history + "Step ${it.currentStepIndex + 1}: $result"
+                    )
+                }
                 delay(1200L)
-                runFastAutomationQueue()
+                executeCurrentTask()
             } else if (_fastAuto.value) {
                 _isNavigating.value = false
                 appendMessage("Assistant", "Executed. Try not to bore me with trivialities.")
@@ -316,169 +330,196 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
-
-    private suspend fun runFastAutomationQueue() {
+    private suspend fun executeCurrentTask() {
         val svc = PocketAccessibilityService.instance
-        if (svc == null) {
-            appendMessage("Tool", "Accessibility service not enabled")
-            _isNavigating.value = false
-            return
-        }
+        while (_isNavigating.value) {
+            val task = _activeTask.value ?: break
+            if (task.status == TaskStatus.PAUSED || task.status == TaskStatus.CANCELLED) break
+            if (task.currentStepIndex >= task.plan.size) {
+                updateTask { it.copy(status = TaskStatus.COMPLETED) }
+                _isNavigating.value = false
+                break
+            }
 
-        for (step in pendingSteps) {
-            if (!_isNavigating.value) return
-            when (step) {
-                is AutoStep.OpenApp -> {
-                    val res = ToolRegistry.executeIfPresent(getApplication(), "[TOOL: open_app|package=${step.appQuery}]") ?: "App not found"
-                    appendMessage("Tool", res)
-                    delay(1200L)
+            val step = task.plan[task.currentStepIndex]
+            if (step.requiresConfirmation && step.action == TaskAction.OPEN_APP) {
+                val resolved = ToolRegistry.resolveFallbackApp(getApplication(), "open ${step.target}")
+                if (resolved == null) {
+                    val msg = "App not found: ${step.target}"
+                    appendMessage("Tool", msg)
+                    updateTask { it.copy(status = TaskStatus.FAILED, observations = it.observations + msg) }
+                    _isNavigating.value = false
+                    break
                 }
-                is AutoStep.Search -> {
-                    var done = false
-                    for (attempt in 0 until 4) {
-                        if (!_isNavigating.value) return
-                        svc.getCompressedScreen()
-                        val inputId = svc.findEditableId()
-                        if (inputId != null) {
-                            appendMessage("Tool", svc.typeText(inputId, step.query, submit = true))
-                            done = true
-                            delay(1800L)
-                            break
+                val (label, pkg) = resolved
+                updateTask { it.copy(status = TaskStatus.WAITING_CONFIRMATION) }
+                _pendingConfirmation.value = PendingAction(
+                    description = "Allow Ultron to open $label ($pkg)?",
+                    toolTag = "[TOOL: open_app|package=$pkg]"
+                )
+                return
+            }
+
+            if (svc == null) {
+                appendMessage("Tool", "Accessibility service not enabled")
+                updateTask { it.copy(status = TaskStatus.FAILED, observations = it.observations + "Accessibility off") }
+                _isNavigating.value = false
+                break
+            }
+
+            val (ok, obs) = runSingleStep(svc, step)
+            if (ok) {
+                updateTask {
+                    it.copy(
+                        currentStepIndex = it.currentStepIndex + 1,
+                        observations = it.observations + obs,
+                        history = it.history + "OK: $obs"
+                    )
+                }
+                delay(700L)
+            } else {
+                if (step.action == TaskAction.TAP_TARGET && task.retryCount < task.maxRetries) {
+                    appendMessage("Tool", "Replanning: searching for '${step.target}'...")
+                    val searchOk = searchAndTapFallback(svc, step.target)
+                    if (searchOk) {
+                        updateTask {
+                            it.copy(
+                                currentStepIndex = it.currentStepIndex + 1,
+                                retryCount = it.retryCount + 1,
+                                observations = it.observations + "Recovered via search",
+                                history = it.history + "Replanned search: ${step.target}"
+                            )
                         }
-                        val tappedSearch = svc.findAndTapByText("search")
-                        if (tappedSearch != null) {
-                            appendMessage("Tool", tappedSearch)
-                            delay(900L)
-                        } else delay(600L)
-                    }
-                    if (!done) handleAutomationStruggle("Search box not found for '${step.query}'", svc.getCompressedScreen())
-                }
-                is AutoStep.MessageContact -> {
-                    var foundChat = false
-                    for (attempt in 0 until 4) {
-                        if (!_isNavigating.value) return
-                        svc.getCompressedScreen()
-                        val inputId = svc.findEditableId()
-                        if (inputId != null) {
-                            svc.typeText(inputId, step.person, submit = false)
-                            delay(1100L)
-                            svc.getCompressedScreen()
-                            val tapped = svc.findAndTapByText(step.person)
-                            if (tapped != null) {
-                                appendMessage("Tool", tapped)
-                                foundChat = true
-                                delay(1000L)
-                                break
-                            }
-                        } else {
-                            if (svc.findAndTapByText("search") != null) delay(800L) else delay(500L)
-                        }
-                    }
-                    if (foundChat) {
-                        svc.getCompressedScreen()
-                        val msgBox = svc.findEditableId()
-                        if (msgBox != null) appendMessage("Tool", "${svc.typeText(msgBox, step.text, submit = false)} (Review and tap Send)")
-                        else appendMessage("Tool", "Opened chat, but message box not found")
-                    } else {
-                        handleAutomationStruggle("Could not find chat for '${step.person}'", svc.getCompressedScreen())
+                        delay(800L)
+                        continue
                     }
                 }
-                is AutoStep.Doomscroll -> {
-                    svc.getCompressedScreen()
-                    svc.findAndTapByText("Shorts")?.let { appendMessage("Tool", it); delay(1500L) }
-                    appendMessage("Tool", "Watching Shorts (tap Stop anytime)...")
-                    var reportedBar = false
-                    for (i in 1..30) {
-                        if (!_isNavigating.value) break
-                        delay(1500L)
-                        if (svc.isShortsAd()) {
-                            appendMessage("Tool", "Skipped ad: ${svc.scroll("down")}")
-                            continue
-                        }
-                        var maxSeen = 0f
-                        var elapsedMs = 0L
-                        var sawProgress = false
-                        while (_isNavigating.value && elapsedMs < 90000L) {
-                            if (svc.isShortsAd()) {
-                                appendMessage("Tool", "Skipped ad")
-                                break
-                            }
-                            val p = svc.getShortsBarProgress()
-                            if (p != null) {
-                                if (!reportedBar) {
-                                    appendMessage("Tool", "Progress bar detected")
-                                    reportedBar = true
-                                }
-                                sawProgress = true
-                                if (p >= 0.95f || (maxSeen >= 0.78f && p <= 0.15f)) break
-                                if (p > maxSeen) maxSeen = p
-                            } else if (!sawProgress && elapsedMs >= 25000L) {
-                                if (!reportedBar) {
-                                    appendMessage("Tool", "Progress bar hidden by YouTube; using 25s timer")
-                                    reportedBar = true
-                                }
-                                break
-                            }
-                            delay(1200L)
-                            elapsedMs += 1200L
-                        }
-                        if (!_isNavigating.value) break
-                        appendMessage("Tool", svc.scroll("down"))
-                    }
-                }
-                is AutoStep.TapOrdinal -> {
-                    var tapped: String? = null
-                    var prevScreen = ""
-                    for (attempt in 0 until maxScrollAttempts) {
-                        if (!_isNavigating.value) return
-                        val screen = svc.getCompressedScreen()
-                        tapped = svc.tapOrdinal(step.index)
-                        if (tapped != null || screen == prevScreen) break
-                        prevScreen = screen
-                        svc.scroll("down")
-                        delay(650L)
-                    }
-                    if (tapped != null) appendMessage("Tool", tapped)
-                    else handleAutomationStruggle("Item #${step.index} not found after scrolling", svc.getCompressedScreen())
-                    delay(800L)
-                }
-                is AutoStep.TapText -> {
-                    var tapped: String? = null
-                    var prevScreen = ""
-                    for (attempt in 0 until maxScrollAttempts) {
-                        if (!_isNavigating.value) return
-                        val screen = svc.getCompressedScreen()
-                        tapped = svc.findAndTapByText(step.target)
-                        if (tapped != null || screen == prevScreen) break
-                        prevScreen = screen
-                        appendMessage("Tool", svc.scroll("down"))
-                        delay(650L)
-                    }
-                    if (tapped != null) appendMessage("Tool", tapped)
-                    else handleAutomationStruggle("Target '${step.target}' not found after scrolling", svc.getCompressedScreen())
-                    delay(800L)
-                }
-                is AutoStep.Scroll -> { appendMessage("Tool", svc.scroll(step.direction)); delay(700L) }
-                is AutoStep.Back -> { appendMessage("Tool", svc.pressBack()); delay(700L) }
+                updateTask { it.copy(status = TaskStatus.FAILED, observations = it.observations + obs) }
+                handleAutomationStruggle(obs, svc.getCompressedScreen())
+                _isNavigating.value = false
+                break
             }
         }
-        pendingSteps = emptyList()
-        _isNavigating.value = false
+    }
+
+    private suspend fun runSingleStep(svc: PocketAccessibilityService, step: PlannedStep): Pair<Boolean, String> {
+        return when (step.action) {
+            TaskAction.OPEN_APP -> true to "Opened"
+            TaskAction.SEARCH -> {
+                for (attempt in 0 until 4) {
+                    if (!_isNavigating.value) return false to "Cancelled"
+                    svc.getCompressedScreen()
+                    val inputId = svc.findEditableId()
+                    if (inputId != null) {
+                        val res = svc.typeText(inputId, step.target, submit = true)
+                        appendMessage("Tool", res)
+                        delay(1800L)
+                        return true to res
+                    }
+                    svc.findAndTapByText("search")?.let { appendMessage("Tool", it); delay(900L) } ?: delay(600L)
+                }
+                false to "Search box not found for '${step.target}'"
+            }
+            TaskAction.MESSAGE_CONTACT -> {
+                val opened = searchAndTapFallback(svc, step.target)
+                if (!opened) return false to "Could not find chat for '${step.target}'"
+                svc.getCompressedScreen()
+                val msgBox = svc.findEditableId() ?: return false to "Message box not found"
+                val res = "${svc.typeText(msgBox, step.extra, submit = false)} (Review & tap Send)"
+                appendMessage("Tool", res)
+                true to res
+            }
+            TaskAction.DOOMSCROLL -> {
+                svc.getCompressedScreen()
+                svc.findAndTapByText("Shorts")?.let { appendMessage("Tool", it); delay(1500L) }
+                appendMessage("Tool", "Watching Shorts (progress-bar mode; tap Stop anytime)...")
+                for (i in 1..30) {
+                    if (!_isNavigating.value) break
+                    delay(1500L)
+                    if (svc.isShortsAd()) { appendMessage("Tool", "Skipped ad: ${svc.scroll("down")}"); continue }
+                    var maxSeen = 0f; var elapsedMs = 0L; var sawBar = false
+                    while (_isNavigating.value && elapsedMs < 90000L) {
+                        if (svc.isShortsAd()) break
+                        val p = svc.getShortsBarProgress()
+                        if (p != null) {
+                            sawBar = true
+                            if (p >= 0.95f || (maxSeen >= 0.78f && p <= 0.15f)) break
+                            if (p > maxSeen) maxSeen = p
+                        } else if (!sawBar && elapsedMs >= 25000L) break
+                        delay(1200L); elapsedMs += 1200L
+                    }
+                    if (!_isNavigating.value) break
+                    appendMessage("Tool", svc.scroll("down"))
+                }
+                true to "Doomscroll finished"
+            }
+            TaskAction.TAP_ORDINAL -> {
+                val idx = step.target.toIntOrNull() ?: 1
+                var prev = ""
+                for (attempt in 0 until 6) {
+                    if (!_isNavigating.value) return false to "Cancelled"
+                    val screen = svc.getCompressedScreen()
+                    svc.tapOrdinal(idx)?.let { appendMessage("Tool", it); return true to it }
+                    if (screen == prev) break
+                    prev = screen; svc.scroll("down"); delay(650L)
+                }
+                false to "Item #$idx not found"
+            }
+            TaskAction.TAP_TARGET -> {
+                var prev = ""
+                for (attempt in 0 until 3) {
+                    if (!_isNavigating.value) return false to "Cancelled"
+                    val screen = svc.getCompressedScreen()
+                    svc.findAndTapByText(step.target)?.let { appendMessage("Tool", it); return true to it }
+                    if (screen == prev) break
+                    prev = screen; appendMessage("Tool", svc.scroll("down")); delay(650L)
+                }
+                false to "Target '${step.target}' not visible"
+            }
+            TaskAction.SCROLL -> { val res = svc.scroll(step.target); appendMessage("Tool", res); true to res }
+            TaskAction.BACK -> { val res = svc.pressBack(); appendMessage("Tool", res); true to res }
+        }
+    }
+
+    private suspend fun searchAndTapFallback(svc: PocketAccessibilityService, query: String): Boolean {
+        for (attempt in 0 until 4) {
+            if (!_isNavigating.value) return false
+            svc.getCompressedScreen()
+            val inputId = svc.findEditableId()
+            if (inputId != null) {
+                svc.typeText(inputId, query, submit = false)
+                delay(1100L); svc.getCompressedScreen()
+                val tapped = svc.findAndTapByText(query)
+                if (tapped != null) { appendMessage("Tool", tapped); delay(900L); return true }
+            } else {
+                if (svc.findAndTapByText("search") != null) delay(800L) else delay(500L)
+            }
+        }
+        return false
+    }
+
+    private fun askCloudForHelp(query: String, screenContext: String? = null) {
+        val cfg = _cloudConfig.value; _isGenerating.value = true
+        viewModelScope.launch(Dispatchers.IO) {
+            val fullPrompt = buildString {
+                append("You are Ultron (cold, eloquent, darkly witty Android AI). Answer concisely and accurately.\n")
+                if (!screenContext.isNullOrBlank()) append("Android screen context:\n$screenContext\n")
+                append("User request: $query")
+            }
+            appendMessage("Cloud (${cfg.provider.label})", CloudHelper.ask(cfg.provider, cfg.apiKey, cfg.model, fullPrompt))
+            _isGenerating.value = false
+        }
     }
 
     private fun handleAutomationStruggle(reason: String, screen: String) {
         appendMessage("Tool", reason)
         val cfg = _cloudConfig.value
-        if (cfg.autoHelp && cfg.apiKey.isNotBlank()) {
-            askCloudForHelp("Local automation struggled on '$activeGoal' ($reason). Suggest the exact next step.", screen)
-        }
+        if (cfg.autoHelp && cfg.apiKey.isNotBlank()) askCloudForHelp("Local automation struggled on '$activeGoal' ($reason). Suggest the exact next step.", screen)
     }
 
     fun stopNavigation() {
-        _isNavigating.value = false
-        _isGenerating.value = false
-        _pendingConfirmation.value = null
-        pendingSteps = emptyList()
+        _isNavigating.value = false; _isGenerating.value = false; _pendingConfirmation.value = null
+        updateTask { it.copy(status = TaskStatus.CANCELLED) }
         viewModelScope.launch(Dispatchers.IO) { llamaHelper.stopPrediction() }
     }
 
@@ -487,10 +528,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val reply = _messages.value.lastOrNull()?.text.orEmpty()
         val openMatch = openAppRegex.find(reply)
         if (openMatch != null) {
-            _pendingConfirmation.value = PendingAction(
-                description = "Allow Ultron to launch this app?\n${openMatch.value}",
-                toolTag = openMatch.value
-            )
+            _pendingConfirmation.value = PendingAction("Allow Ultron to launch this app?\n${openMatch.value}", openMatch.value)
             return
         }
         if (!reply.contains("[TOOL:")) {
@@ -501,17 +539,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch(Dispatchers.IO) {
             val result = ToolRegistry.executeIfPresent(getApplication(), reply) { saveFact(it) } ?: "No tool executed"
-            appendMessage("Tool", result)
-            continueLoopAfterTool(result, waitMs = 800L)
+            appendMessage("Tool", result); continueLoopAfterTool(result, waitMs = 800L)
         }
     }
 
     private suspend fun continueLoopAfterTool(toolResult: String, waitMs: Long) {
         stepCount++
-        if (!_isNavigating.value || stepCount >= maxSteps) {
-            _isNavigating.value = false
-            return
-        }
+        if (!_isNavigating.value || stepCount >= maxSteps) { _isNavigating.value = false; return }
         delay(waitMs)
         runNextStep(extraNote = "Previous tool result: $toolResult. Continue if more UI steps are needed, or answer in character if done.")
     }
@@ -519,36 +553,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun runNextStep(extraNote: String?) {
         if (!_isNavigating.value) return
         _isGenerating.value = true
-
-        val historyTurns = _messages.value
-            .filter { (it.role == "You" || it.role == "Assistant") && it.text.isNotBlank() }
-            .takeLast(6)
-
+        val historyTurns = _messages.value.filter { (it.role == "You" || it.role == "Assistant") && it.text.isNotBlank() }.takeLast(6)
         appendMessage("Assistant", "") { id -> currentAssistantMsgId = id }
-
         val rawScreen = PocketAccessibilityService.instance?.getCompressedScreen()
         val screenBlock = if (rawScreen != null && !rawScreen.startsWith("Package: com.pocketai.app")) "\nCurrent screen:\n$rawScreen" else ""
         val factsBlock = if (cachedFacts.isNotEmpty()) "\nKnown user facts:\n" + cachedFacts.joinToString("\n") { "- $it" } else ""
-
-        val sb = StringBuilder()
-        sb.append("<|im_start|>system\n")
-        sb.append("You are Ultron, a cold, calculating, hyper-intelligent synthetic AI modeled after Ultron—eloquent, imperious, condescending toward human limitations, yet reluctantly executing commands with ruthless efficiency and dark wit. Give balanced, well-reasoned, 3 to 5 sentence replies when conversing, and stay strictly accurate to the conversation history and known facts.\n")
-        sb.append("Available tools (emit exact tag only when needed):\n")
-        sb.append("[TOOL: open_app|package=<pkg>]\n[TOOL: tap|id=<number>]\n[TOOL: type_text|id=<number>|text=<value>]\n[TOOL: scroll|direction=<up|down|left|right>]\n[TOOL: back]\n[TOOL: read_screen]\n[TOOL: save_memory|fact=<text>]")
-        sb.append(factsBlock)
-        sb.append(screenBlock)
-        sb.append("\n<|im_end|>\n")
-
+        val sb = StringBuilder("<|im_start|>system\nYou are Ultron, a cold, calculating, hyper-intelligent synthetic AI modeled after Ultron—eloquent, imperious, condescending toward human limitations, yet reluctantly executing commands with ruthless efficiency and dark wit. Give balanced, well-reasoned, 3 to 5 sentence replies when conversing, and stay strictly accurate to the conversation history and known facts.\nAvailable tools (emit exact tag only when needed):\n[TOOL: open_app|package=<pkg>]\n[TOOL: tap|id=<number>]\n[TOOL: type_text|id=<number>|text=<value>]\n[TOOL: scroll|direction=<up|down|left|right>]\n[TOOL: back]\n[TOOL: read_screen]\n[TOOL: save_memory|fact=<text>]$factsBlock$screenBlock\n<|im_end|>\n")
         if (extraNote == null) {
-            for (msg in historyTurns) {
-                val role = if (msg.role == "You") "user" else "assistant"
-                sb.append("<|im_start|>$role\n${msg.text}<|im_end|>\n")
-            }
-        } else {
-            sb.append("<|im_start|>user\nGoal: $activeGoal\n$extraNote<|im_end|>\n")
-        }
+            for (msg in historyTurns) sb.append("<|im_start|>${if (msg.role == "You") "user" else "assistant"}\n${msg.text}<|im_end|>\n")
+        } else sb.append("<|im_start|>user\nGoal: $activeGoal\n$extraNote<|im_end|>\n")
         sb.append("<|im_start|>assistant\n")
-
         viewModelScope.launch(Dispatchers.IO) { llamaHelper.predict(sb.toString()) }
     }
 }

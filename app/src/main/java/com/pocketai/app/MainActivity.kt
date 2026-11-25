@@ -64,6 +64,7 @@ fun PocketAIScreen(vm: MainViewModel = viewModel()) {
     val isGenerating by vm.isGenerating.collectAsState()
     val isNavigating by vm.isNavigating.collectAsState()
     val pending by vm.pendingConfirmation.collectAsState()
+    val activeTask by vm.activeTask.collectAsState()
 
     var input by remember { mutableStateOf("") }
     var voiceEnabled by remember { mutableStateOf(true) }
@@ -167,6 +168,11 @@ fun PocketAIScreen(vm: MainViewModel = viewModel()) {
             )
             OutlinedButton(onClick = { vm.clearChat() }) {
                 Text("Clear")
+            }
+            if (activeTask?.status == TaskStatus.RUNNING) {
+                OutlinedButton(onClick = { vm.pauseTask() }) { Text("Pause") }
+            } else if (activeTask?.status == TaskStatus.PAUSED) {
+                Button(onClick = { vm.resumeTask() }) { Text("Resume") }
             }
             if (isGenerating || isNavigating) {
                 Button(

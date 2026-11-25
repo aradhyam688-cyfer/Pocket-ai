@@ -87,11 +87,22 @@ class PocketAccessibilityService : AccessibilityService() {
 
     fun findAndTapByText(target: String): String? {
         val tNorm = norm(target)
-        val match = nodeMap.entries.firstOrNull {
-            norm(it.value.first).contains(tNorm)
-        } ?: return null
+        val exact = nodeMap.entries.firstOrNull { norm(it.value.first).contains(tNorm) }
+        val tokens = target.lowercase().split(Regex("\\s+")).filter { it.length >= 2 }
+        val chosen = exact ?: if (tokens.isNotEmpty()) {
+            nodeMap.entries
+                .map { entry ->
+                    val labelLower = entry.value.first.lowercase()
+                    val score = tokens.count { labelLower.contains(it) }
+                    entry to score
+                }
+                .filter { it.second > 0 }
+                .maxByOrNull { it.second }
+                ?.first
+        } else null
+        val match = chosen ?: return null
         val ok = match.value.second.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-        return if (ok) "Tapped [${match.key}] \"${match.value.first}\"" else "Failed to tap \"${match.value.first}\""
+        return if (ok) "Tapped [${match.key}] \"${match.value.first.take(40)}\"" else "Failed to tap \"${match.value.first.take(40)}\""
     }
 
     fun tapOrdinal(oneBasedIndex: Int): String? {
