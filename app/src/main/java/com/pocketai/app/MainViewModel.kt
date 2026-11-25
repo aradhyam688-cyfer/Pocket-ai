@@ -74,7 +74,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var stepCount = 0
     private var lastToolTag = ""
     private var consecutiveFailures = 0
-        lastSearchQuery = ""
+    private var lastSearchQuery = ""
     private var lastSearchQuery = ""
     private var currentAssistantMsgId: Long? = null
     private var cachedFacts: List<String> = emptyList()
@@ -258,6 +258,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         stepCount = 0
         lastToolTag = ""
         consecutiveFailures = 0
+        lastSearchQuery = ""
         appendMessage("You", trimmed)
 
         if (_fastAuto.value) {
