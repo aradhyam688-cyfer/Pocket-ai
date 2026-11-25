@@ -270,7 +270,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val toAddr = Regex("""[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}""").find(input)?.value ?: ""
             val subjMatch = Regex("""(?i)\bsubject\s+(.+?)(?=\s+\bbody\b|$)""").find(input)
             val bodyMatch = Regex("""(?i)\bbody\s+(.+)$""").find(input)
-            val aboutMatch = Regex("""(?i)\b(?:about|regarding|for)\s+(.+)$""").find(input)
+            val aboutMatch = Regex("""(?i)\b(?:about|regarding|for|on)\s+(.+)$""").find(input)
             val subj = subjMatch?.groupValues?.get(1)?.trim() ?: aboutMatch?.groupValues?.get(1)?.trim()?.take(60) ?: ""
             val body = bodyMatch?.groupValues?.get(1)?.trim() ?: aboutMatch?.groupValues?.get(1)?.trim() ?: input
             return listOf(PlannedStep(TaskAction.COMPOSE_EMAIL, target = toAddr, extra = "$subj|||$body"))
@@ -560,7 +560,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (isLoaded && body.length < 140) {
                     pendingEmailTo = step.target
                     pendingEmailSubject = subject
-                    _isNavigating.value = false
+                    _isNavigating.value = true
                     updateTask { it.copy(status = TaskStatus.COMPLETED) }
                     activeGoal = "Write a concise, clear, ready-to-send email body about: $body. Output ONLY the email body, no subject line, no [TOOL:] tags."
                     runNextStep(extraNote = activeGoal)
@@ -590,7 +590,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (pageText.isNotBlank()) {
                     val summaryPrompt = "Summarize the answer to '${step.target}' concisely in 2-3 sentences from this Google result:\n$pageText"
                     if (_cloudConfig.value.apiKey.isNotBlank()) askCloudForHelp(summaryPrompt)
-                    else if (isLoaded) { _isNavigating.value = false; activeGoal = summaryPrompt; runNextStep(extraNote = summaryPrompt) }
+                    else if (isLoaded) { _isNavigating.value = true; activeGoal = summaryPrompt; runNextStep(extraNote = summaryPrompt) }
                     else appendMessage("Assistant", pageText.lines().filter { it.length > 25 }.take(4).joinToString(" "))
                 }
                 true to "Narrated web search"
@@ -602,7 +602,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }.orEmpty()
                 if (screenText.isBlank()) return false to "No readable screen text captured yet—open the question screen first."
                 val qPrompt = "Screen text from another app:\n$screenText\n\nUser request:${step.target}\nSolve or explain clearly in character."
-                if (isLoaded) { _isNavigating.value = false; activeGoal = step.target; runNextStep(extraNote = qPrompt) }
+                if (isLoaded) { _isNavigating.value = true; activeGoal = step.target; runNextStep(extraNote = qPrompt) }
                 else if (_cloudConfig.value.apiKey.isNotBlank()) askCloudForHelp(qPrompt)
                 else appendMessage("Tool", "Load a .gguf model or set a Cloud key to solve screen questions.")
                 true to "Analyzed screen"
