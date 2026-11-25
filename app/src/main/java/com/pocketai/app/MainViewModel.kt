@@ -476,7 +476,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 val (label, pkg) = resolved
                 updateTask { it.copy(status = TaskStatus.WAITING_CONFIRMATION) }
-                _pendingConfirmation.value = PendingAction("Allow Ultron to open $label ($pkg)?", "[TOOL: open_app\vert{}package=$pkg]")
+                _pendingConfirmation.value = PendingAction("Allow Ultron to open $label ($pkg)?", "[TOOL: open_app|package=$pkg]")
                 return
             }
             val needSvc = step.action != TaskAction.WEB_SEARCH_NARRATE && step.action != TaskAction.ANALYZE_SCREEN
