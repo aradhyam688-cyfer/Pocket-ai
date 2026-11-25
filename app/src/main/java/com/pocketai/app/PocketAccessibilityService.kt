@@ -33,6 +33,7 @@ class PocketAccessibilityService : AccessibilityService() {
         private set
     @Volatile var lastExternalPackage: String = ""
         private set
+    private var lastCacheTime = 0L
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -40,10 +41,14 @@ class PocketAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        val pkg = event?.packageName?.toString() ?: return
-        if (pkg != "com.pocketai.app" && pkg != "com.android.systemui") {
-            lastExternalPackage = pkg
-            val txt = readFullScreenText(2200)
+        if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+        val pkg = event.packageName?.toString() ?: return
+        if (pkg == "com.pocketai.app" || pkg == "com.android.systemui") return
+        lastExternalPackage = pkg
+        val now = System.currentTimeMillis()
+        if (now - lastCacheTime > 2500L) {
+            lastCacheTime = now
+            val txt = readFullScreenText(1800)
             if (txt.length > 30) lastExternalScreenText = txt
         }
     }

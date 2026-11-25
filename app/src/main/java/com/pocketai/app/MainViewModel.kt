@@ -567,8 +567,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     return false to "Waiting for user to pick contact"
                 }
                 if (!opened) return false to "Could not find chat for '${step.target}'"
-                svc.getCompressedScreen()
-                val msgBox = svc.findEditableId() ?: return false to "Message box not found"
+                var msgBox: Int? = null
+                for (w in 0 until 4) {
+                    val chatObs = svc.observeScreen()
+                    msgBox = chatObs.elements.lastOrNull { it.isEditable && it.bounds.bottom > 900 }?.id
+                        ?: svc.findEditableId()
+                    if (msgBox != null) break
+                    delay(450L)
+                }
+                if (msgBox == null) return false to "Message box not found"
                 val res = "${svc.typeText(msgBox, step.extra, submit = false)} (Review & tap Send)"
                 appendMessage("Tool", res); true to res
             }
