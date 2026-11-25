@@ -48,12 +48,12 @@ class PocketAccessibilityService : AccessibilityService() {
         return parts.joinToString(" ").take(80)
     }
 
-    fun getCompressedScreen(maxNodes: Int = 35): String {
-        val root = rootInActiveWindow ?: return "Screen: unavailable"
+    fun observeScreen(maxNodes: Int = 40): ScreenObservation {
+        val root = rootInActiveWindow ?: return ScreenObservation("unavailable", elements = emptyList())
         nodeMap.clear()
-        val lines = mutableListOf<String>()
-        lines.add("Package: ${root.packageName ?: "unknown"}")
+        val list = mutableListOf<UiElement>()
         var nextId = 1
+        val rect = Rect()
 
         fun walk(node: AccessibilityNodeInfo) {
             if (nextId > maxNodes) return
@@ -64,9 +64,19 @@ class PocketAccessibilityService : AccessibilityService() {
                 if (label.isNotEmpty() || node.isEditable) {
                     val id = nextId++
                     nodeMap[id] = label to node
-                    val type = node.className?.toString()?.substringAfterLast('.') ?: "View"
-                    val tag = if (node.isEditable) "input" else "tap"
-                    lines.add("[$id] $type \"$label\" ($tag)")
+                    node.getBoundsInScreen(rect)
+                    list.add(
+                        UiElement(
+                            id = id,
+                            className = node.className?.toString()?.substringAfterLast('.') ?: "View",
+                            text = (node.text ?: "").toString().trim().ifBlank { label },
+                            contentDescription = (node.contentDescription ?: "").toString().trim(),
+                            bounds = Rect(rect),
+                            isClickable = node.isClickable,
+                            isEditable = node.isEditable,
+                            isScrollable = node.isScrollable
+                        )
+                    )
                     return
                 }
             }
@@ -76,7 +86,28 @@ class PocketAccessibilityService : AccessibilityService() {
         }
 
         walk(root)
-        return lines.joinToString("\n")
+        return ScreenObservation(root.packageName?.toString() ?: "unknown", elements = list)
+    }
+
+    fun getCompressedScreen(maxNodes: Int = 35): String {
+        val obs = observeScreen(maxNodes)
+        return if (obs.packageName == "unavailable") "Screen: unavailable" else obs.toCompressedText()
+    }
+
+    fun findMatchingElements(target: String, skipEditable: Boolean = true): List<UiElement> {
+        val obs = observeScreen()
+        val tNorm = norm(target)
+        val pool = if (skipEditable) obs.elements.filter { !it.isEditable } else obs.elements
+        val direct = pool.filter { norm(it.displayLabel).contains(tNorm) }
+        if (direct.isNotEmpty()) return direct.distinctBy { norm(it.displayLabel) }.take(4)
+
+        val tokens = target.lowercase().split(Regex("\\s+")).filter { it.length >= 2 }
+        if (tokens.isEmpty()) return emptyList()
+        return pool.mapNotNull { el ->
+            val l = el.displayLabel.lowercase()
+            val score = tokens.count { l.contains(it) }
+            if (score > 0) el to score else null
+        }.sortedByDescending { it.second }.map { it.first }.distinctBy { norm(it.displayLabel) }.take(4)
     }
 
     fun tap(id: Int): String {

@@ -65,6 +65,7 @@ fun PocketAIScreen(vm: MainViewModel = viewModel()) {
     val isNavigating by vm.isNavigating.collectAsState()
     val pending by vm.pendingConfirmation.collectAsState()
     val activeTask by vm.activeTask.collectAsState()
+    val choices by vm.choicePrompt.collectAsState()
 
     var input by remember { mutableStateOf("") }
     var voiceEnabled by remember { mutableStateOf(true) }
@@ -112,6 +113,26 @@ fun PocketAIScreen(vm: MainViewModel = viewModel()) {
             )
             vm.loadModel(it.toString())
         }
+    }
+
+    if (choices.isNotEmpty()) {
+        AlertDialog(
+            onDismissRequest = { vm.dismissChoices() },
+            title = { Text("Multiple Matches Found") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Which one did you mean?")
+                    choices.forEach { el ->
+                        OutlinedButton(
+                            onClick = { vm.selectChoice(el) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text(el.displayLabel.take(45)) }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { vm.dismissChoices() }) { Text("Cancel") } }
+        )
     }
 
     pending?.let { action ->

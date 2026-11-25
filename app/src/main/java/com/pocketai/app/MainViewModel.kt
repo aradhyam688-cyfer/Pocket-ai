@@ -65,6 +65,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _pendingConfirmation = MutableStateFlow<PendingAction?>(null)
     val pendingConfirmation = _pendingConfirmation.asStateFlow()
 
+    private val _choicePrompt = MutableStateFlow<List<UiElement>>(emptyList())
+    val choicePrompt = _choicePrompt.asStateFlow()
+    private var pendingChoiceContinuation: (() -> Unit)? = null
+
     private var isLoaded = false
     private var activeGoal = ""
     private var stepCount = 0
@@ -284,6 +288,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         runNextStep(extraNote = null)
     }
 
+    fun selectChoice(element: UiElement) {
+        _choicePrompt.value = emptyList()
+        val cont = pendingChoiceContinuation
+        pendingChoiceContinuation = null
+        viewModelScope.launch(Dispatchers.IO) {
+            val res = PocketAccessibilityService.instance?.tap(element.id) ?: "Accessibility off"
+            appendMessage("Tool", res)
+            updateTask { it.copy(status = TaskStatus.RUNNING, observations = it.observations + res) }
+            delay(900L)
+            cont?.invoke()
+        }
+    }
+
+    fun dismissChoices() {
+        _choicePrompt.value = emptyList()
+        pendingChoiceContinuation = null
+        _isNavigating.value = false
+        updateTask { it.copy(status = TaskStatus.CANCELLED) }
+        appendMessage("Tool", "Selection cancelled by user")
+    }
+
     fun pauseTask() {
         updateTask { it.copy(status = TaskStatus.PAUSED, history = it.history + "Paused by user") }
         _isNavigating.value = false
@@ -400,6 +425,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         continue
                     }
                 }
+                if (_choicePrompt.value.isNotEmpty()) { return }
                 updateTask { it.copy(status = TaskStatus.FAILED, observations = it.observations + obs) }
                 handleAutomationStruggle(obs, svc.getCompressedScreen())
                 _isNavigating.value = false
@@ -428,6 +454,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             TaskAction.MESSAGE_CONTACT -> {
                 val opened = searchAndTapFallback(svc, step.target)
+                if (!opened && _choicePrompt.value.isNotEmpty()) {
+                    pendingChoiceContinuation = {
+                        viewModelScope.launch(Dispatchers.IO) {
+                            svc.getCompressedScreen()
+                            val box = svc.findEditableId()
+                            if (box != null) appendMessage("Tool", "${svc.typeText(box, step.extra, submit = false)} (Review & tap Send)")
+                            _isNavigating.value = false
+                            updateTask { it.copy(status = TaskStatus.COMPLETED) }
+                        }
+                    }
+                    return false to "Waiting for user to pick contact"
+                }
                 if (!opened) return false to "Could not find chat for '${step.target}'"
                 svc.getCompressedScreen()
                 val msgBox = svc.findEditableId() ?: return false to "Message box not found"
@@ -494,7 +532,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val inputId = svc.findEditableId()
             if (inputId != null) {
                 svc.typeText(inputId, query, submit = false)
-                delay(1100L); svc.getCompressedScreen()
+                delay(1100L)
+                val matches = svc.findMatchingElements(query, skipEditable = true)
+                if (matches.size > 1) {
+                    val exact = matches.firstOrNull { it.displayLabel.equals(query, ignoreCase = true) }
+                    if (exact != null) {
+                        val res = svc.tap(exact.id)
+                        appendMessage("Tool", res); delay(900L); return true
+                    }
+                    updateTask { it.copy(status = TaskStatus.WAITING_CONFIRMATION) }
+                    _choicePrompt.value = matches
+                    return false
+                }
                 val tapped = svc.findAndTapByText(query, skipEditable = true)
                 if (tapped != null) { appendMessage("Tool", tapped); delay(900L); return true }
             } else {
