@@ -178,6 +178,50 @@ class PocketAccessibilityService : AccessibilityService() {
             l.contains("www.")
     }
 
+
+    fun findPdfDocuments(): List<UiElement> {
+        val obs = observeScreen(maxNodes = 50)
+        val nonPdf = Regex("""(?i)\.(?:jpg|jpeg|png|webp|mp4|mkv|mp3|ogg|opus|doc|docx|xlsx|zip)\b""")
+        val timeRegex = Regex("""\b(\d{1,2}):(\d{2})\s*(am|pm)?\b""", RegexOption.IGNORE_CASE)
+
+        fun timeScore(label: String): Int {
+            val m = timeRegex.find(label) ?: return -1
+            var h = m.groupValues[1].toIntOrNull() ?: return -1
+            val min = m.groupValues[2].toIntOrNull() ?: return -1
+            val ampm = m.groupValues[3].lowercase()
+            if (ampm == "pm" && h < 12) h += 12
+            if (ampm == "am" && h == 12) h = 0
+            return h * 60 + min
+        }
+
+        return obs.elements
+            .filter { el ->
+                val l = el.displayLabel
+                el.isClickable && !el.isEditable &&
+                    !isNoiseOrLink(l) &&
+                    !nonPdf.containsMatchIn(l) &&
+                    (l.contains(".pdf", ignoreCase = true) || Regex("""(?i)\bpdf\b""").containsMatchIn(l))
+            }
+            .sortedWith(
+                compareByDescending<UiElement> { it.bounds.bottom }
+                    .thenByDescending { timeScore(it.displayLabel) }
+            )
+    }
+
+    fun checkFileStatusMessage(): String? {
+        val obs = observeScreen(maxNodes = 35)
+        for (el in obs.elements) {
+            val l = el.displayLabel.lowercase()
+            when {
+                l == "download" || l.startsWith("download ") -> return "DOWNLOAD:${el.id}"
+                l.contains("doesn't exist") || l.contains("not found") || l.contains("unavailable") || l.contains("can't open") -> {
+                    return "UNAVAILABLE:${el.displayLabel}"
+                }
+            }
+        }
+        return null
+    }
+
     fun findMatchingElements(target: String, skipEditable: Boolean = true): List<UiElement> {
         val obs = observeScreen()
         val tNorm = norm(target)

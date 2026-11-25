@@ -198,6 +198,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .map { it.trim() }
             .filter { it.isNotEmpty() }
 
+        val pdfIntent = Regex("""(?i)\b(?:pdf|document)\b""").containsMatchIn(input) &&
+            Regex("""(?i)\b(?:whatsapp|wa)\b""").containsMatchIn(input)
+        if (pdfIntent) {
+            val personMatch = Regex("""(?i)\b(?:with|from|by)\s+([a-zA-Z0-9 ._-]+?)(?=\s*(?:,|\band\b|\bthen\b|\bsent\b|\bon\b|\bin\b|$))""").find(input)
+            val person = personMatch?.groupValues?.get(1)?.trim()
+            if (!person.isNullOrBlank()) {
+                return listOf(
+                    PlannedStep(TaskAction.OPEN_APP, target = "WhatsApp"),
+                    PlannedStep(TaskAction.TAP_TARGET, target = person),
+                    PlannedStep(TaskAction.FIND_OPEN_PDF)
+                )
+            }
+        }
+
         val steps = mutableListOf<PlannedStep>()
         for (c in clauses) {
             val lower = c.lowercase()
@@ -523,6 +537,43 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 false to "Target '${step.target}' not visible"
             }
+            TaskAction.FIND_OPEN_PDF -> {
+                var pdfs: List<UiElement> = emptyList()
+                for (attempt in 0 until 5) {
+                    if (!_isNavigating.value) return false to "Cancelled"
+                    pdfs = svc.findPdfDocuments()
+                    if (pdfs.isNotEmpty()) break
+                    svc.scroll("up")
+                    delay(800L)
+                }
+                if (pdfs.isEmpty()) {
+                    return false to "No PDF attachment found in this chat"
+                }
+                val latest = pdfs.first()
+                val tapRes = svc.tap(latest.id)
+                appendMessage("Tool", "Opening latest PDF: ${latest.displayLabel.take(45)}")
+                delay(1200L)
+
+                val status = svc.checkFileStatusMessage()
+                if (status != null && status.startsWith("DOWNLOAD:")) {
+                    val dlId = status.removePrefix("DOWNLOAD:").toIntOrNull()
+                    if (dlId != null) {
+                        appendMessage("Tool", "Downloading PDF...")
+                        svc.tap(dlId)
+                        delay(2200L)
+                        svc.findPdfDocuments().firstOrNull()?.let { svc.tap(it.id); delay(1200L) }
+                    }
+                } else if (status != null && status.startsWith("UNAVAILABLE:")) {
+                    return false to "PDF unavailable: ${status.removePrefix("UNAVAILABLE:")}"
+                }
+
+                val afterObs = svc.observeScreen()
+                val verified = afterObs.packageName != "com.whatsapp" || afterObs.elements.any {
+                    it.displayLabel.contains("pdf", ignoreCase = true) || it.displayLabel.contains("page", ignoreCase = true)
+                }
+                if (verified) true to "Verified PDF opened ($tapRes)"
+                else true to "Tapped PDF (${latest.displayLabel.take(35)})"
+            }
             TaskAction.SCROLL -> { val res = svc.scroll(step.target); appendMessage("Tool", res); true to res }
             TaskAction.BACK -> { val res = svc.pressBack(); appendMessage("Tool", res); true to res }
         }
@@ -545,6 +596,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     updateTask { it.copy(status = TaskStatus.WAITING_CONFIRMATION) }
                     _choicePrompt.value = matches
+                    if (pendingChoiceContinuation == null) {
+                        pendingChoiceContinuation = {
+                            updateTask { it.copy(currentStepIndex = it.currentStepIndex + 1, status = TaskStatus.RUNNING) }
+                            _isNavigating.value = true
+                            viewModelScope.launch(Dispatchers.IO) { executeCurrentTask() }
+                        }
+                    }
                     svc.showFloatingChoices(
                         choices = matches,
                         onPick = { picked -> selectChoice(picked) },
