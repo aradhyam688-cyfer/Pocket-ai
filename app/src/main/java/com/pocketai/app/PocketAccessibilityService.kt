@@ -2,6 +2,7 @@ package com.pocketai.app
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
+import android.content.Intent
 import android.graphics.PixelFormat
 import android.os.Handler
 import android.os.Looper
@@ -28,13 +29,24 @@ class PocketAccessibilityService : AccessibilityService() {
 
     private val nodeMap = mutableMapOf<Int, Pair<String, AccessibilityNodeInfo>>()
     private var overlayView: View? = null
+    @Volatile var lastExternalScreenText: String = ""
+        private set
+    @Volatile var lastExternalPackage: String = ""
+        private set
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        val pkg = event?.packageName?.toString() ?: return
+        if (pkg != "com.pocketai.app" && pkg != "com.android.systemui") {
+            lastExternalPackage = pkg
+            val txt = readFullScreenText(2200)
+            if (txt.length > 30) lastExternalScreenText = txt
+        }
+    }
 
     override fun onInterrupt() {}
 
@@ -121,6 +133,80 @@ class PocketAccessibilityService : AccessibilityService() {
             }
         }
         return parts.joinToString(" ").take(80)
+    }
+
+
+    fun readFullScreenText(maxChars: Int = 2500): String {
+        val root = rootInActiveWindow ?: return ""
+        val sb = StringBuilder()
+        fun walk(node: AccessibilityNodeInfo) {
+            if (sb.length >= maxChars || node.isPassword) return
+            val t = (node.text ?: node.contentDescription ?: "").toString().trim()
+            if (t.isNotEmpty() && !isNoiseOrLink(t)) {
+                sb.append(t).append("\n")
+            }
+            for (i in 0 until node.childCount) {
+                node.getChild(i)?.let { walk(it) }
+            }
+        }
+        walk(root)
+        return sb.toString().trim().take(maxChars)
+    }
+
+    fun isOnAppHome(pkg: String? = null): Boolean {
+        val obs = observeScreen(45)
+        val p = pkg ?: obs.packageName
+        val labels = obs.elements.map { it.displayLabel.lowercase() }
+        val hasBackArrow = labels.any { it == "navigate up" || it == "back" }
+        return when {
+            p.contains("whatsapp") -> {
+                val hasBottomInput = obs.elements.any { it.isEditable && it.bounds.bottom > 1000 }
+                val hasTabs = labels.any { it.contains("chats") } && labels.any { it.contains("updates") || it.contains("calls") }
+                hasTabs && !hasBottomInput && !hasBackArrow
+            }
+            p.contains("youtube") -> {
+                val hasTabs = labels.any { it == "home" } && labels.any { it == "shorts" }
+                hasTabs && !hasBackArrow
+            }
+            p.contains("chrome") || p.contains("googlequicksearchbox") -> {
+                !hasBackArrow && obs.elements.any { it.isEditable || it.displayLabel.contains("search", ignoreCase = true) }
+            }
+            else -> !hasBackArrow
+        }
+    }
+
+    fun goToAppHome(context: Context, targetApp: String = ""): String {
+        val obs = observeScreen(45)
+        val p = obs.packageName
+        if (isOnAppHome(p)) return "Already on home screen ($p)"
+
+        // 1. Try direct Home / Chats tab tap
+        val tab = obs.elements.firstOrNull {
+            val l = it.displayLabel.lowercase()
+            it.isClickable && (l == "home" || l == "chats" || l == "home tab")
+        }
+        if (tab != null) {
+            tap(tab.id)
+            return "Tapped ${tab.displayLabel} tab"
+        }
+
+        // 2. Bounded Back loop
+        for (i in 1..4) {
+            pressBack()
+            Thread.sleep(550L)
+            val now = observeScreen(45)
+            if (isOnAppHome(now.packageName)) return "Returned to home screen after $i back(s)"
+            if (now.packageName != p) break
+        }
+
+        // 3. Relaunch if backed out completely
+        val pkgToLaunch = if (targetApp.isNotBlank()) targetApp else p
+        context.packageManager.getLaunchIntentForPackage(pkgToLaunch)?.let {
+            it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            context.startActivity(it)
+            return "Relaunched $pkgToLaunch home"
+        }
+        return "Could not return to home screen"
     }
 
     fun observeScreen(maxNodes: Int = 40): ScreenObservation {

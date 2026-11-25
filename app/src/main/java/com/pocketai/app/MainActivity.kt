@@ -9,11 +9,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -42,9 +40,7 @@ class MainActivity : ComponentActivity() {
                             showCrash = null
                         }) { Text("Clear & Retry") }
                         Spacer(Modifier.height(8.dp))
-                        androidx.compose.foundation.lazy.LazyColumn {
-                            item { Text(showCrash ?: "") }
-                        }
+                        LazyColumn { item { Text(showCrash ?: "") } }
                     }
                 } else {
                     PocketAIScreen()
@@ -54,6 +50,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PocketAIScreen(vm: MainViewModel = viewModel()) {
     val context = LocalContext.current
@@ -61,6 +58,10 @@ fun PocketAIScreen(vm: MainViewModel = viewModel()) {
     val status by vm.status.collectAsState()
     val memoryCount by vm.memoryCount.collectAsState()
     val fastAuto by vm.fastAuto.collectAsState()
+    val cloudCfg by vm.cloudConfig.collectAsState()
+    val voiceCfg by vm.voiceConfig.collectAsState()
+    val recentModels by vm.recentModels.collectAsState()
+    val autoLoadLast by vm.autoLoadLast.collectAsState()
     val isGenerating by vm.isGenerating.collectAsState()
     val isNavigating by vm.isNavigating.collectAsState()
     val pending by vm.pendingConfirmation.collectAsState()
@@ -71,48 +72,150 @@ fun PocketAIScreen(vm: MainViewModel = viewModel()) {
     var voiceEnabled by remember { mutableStateOf(true) }
     var isListening by remember { mutableStateOf(false) }
     var voiceStatus by remember { mutableStateOf<String?>(null) }
+    var showCloudDialog by remember { mutableStateOf(false) }
+    var showModelsDialog by remember { mutableStateOf(false) }
+    var showVoiceDialog by remember { mutableStateOf(false) }
 
     val voice = remember {
         VoiceController(
             context = context,
             onListeningChanged = { isListening = it },
-            onResult = { spoken ->
-                voiceStatus = null
-                vm.sendMessage(spoken)
-            },
+            onResult = { spoken -> voiceStatus = null; vm.sendMessage(spoken) },
             onError = { err -> voiceStatus = err }
         )
     }
 
-    DisposableEffect(Unit) {
-        onDispose { voice.release() }
+    LaunchedEffect(voiceCfg) {
+        voice.applyVoiceSettings(voiceCfg.voiceName, voiceCfg.pitch, voiceCfg.rate)
     }
+    DisposableEffect(Unit) { onDispose { voice.release() } }
 
-    // Speak the latest Assistant reply when generation finishes
     LaunchedEffect(isGenerating, messages.size) {
         if (!isGenerating && voiceEnabled) {
             val last = messages.lastOrNull()
-            if (last != null && last.role == "Assistant" && last.text.isNotBlank()) {
+            if (last != null && (last.role == "Assistant" || last.role.startsWith("Cloud")) && last.text.isNotBlank()) {
                 voice.speak(last.text)
             }
         }
     }
 
-    val micPermLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
+    val micPermLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) voice.startListening() else voiceStatus = "Microphone permission denied"
     }
 
-    val picker = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri ->
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let {
-            context.contentResolver.takePersistableUriPermission(
-                it, Intent.FLAG_GRANT_READ_URI_PERMISSION
-            )
+            context.contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION)
             vm.loadModel(it.toString())
         }
+    }
+    if (showModelsDialog) {
+        AlertDialog(
+            onDismissRequest = { showModelsDialog = false },
+            title = { Text("Recent Models") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Checkbox(checked = autoLoadLast, onCheckedChange = { vm.setAutoLoadLast(it) })
+                        Text("Auto-load last model on start")
+                    }
+                    if (recentModels.isEmpty()) Text("No models loaded yet.")
+                    recentModels.forEach { m ->
+                        OutlinedButton(
+                            onClick = { vm.loadModel(m.uri, m.name); showModelsDialog = false },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text(m.name) }
+                    }
+                    Button(
+                        onClick = { showModelsDialog = false; picker.launch(arrayOf("*/*")) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Browse New .gguf") }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { showModelsDialog = false }) { Text("Close") } }
+        )
+    }
+
+    if (showVoiceDialog) {
+        val voices = remember { voice.getAvailableVoices() }
+        var selVoice by remember { mutableStateOf(voiceCfg.voiceName) }
+        var pitch by remember { mutableStateOf(voiceCfg.pitch) }
+        var rate by remember { mutableStateOf(voiceCfg.rate) }
+        var wake by remember { mutableStateOf(voiceCfg.wakeMode) }
+        AlertDialog(
+            onDismissRequest = { showVoiceDialog = false },
+            title = { Text("Voice & Wake Word") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Checkbox(checked = wake, onCheckedChange = { wake = it })
+                        Text("Wake mode (\"Ultron\")")
+                    }
+                    Text("Pitch: ${"%.2f".format(pitch)}")
+                    Slider(value = pitch, onValueChange = { pitch = it }, valueRange = 0.6f..1.4f)
+                    Text("Speed: ${"%.2f".format(rate)}")
+                    Slider(value = rate, onValueChange = { rate = it }, valueRange = 0.7f..1.4f)
+                    if (voices.isNotEmpty()) {
+                        Text("System Voices:")
+                        LazyColumn(modifier = Modifier.height(120.dp)) {
+                            items(voices) { v ->
+                                FilterChip(
+                                    selected = selVoice == v,
+                                    onClick = { selVoice = v },
+                                    label = { Text(v.take(32)) }
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    vm.saveVoiceConfig(selVoice, pitch, rate, wake)
+                    voice.applyVoiceSettings(selVoice, pitch, rate)
+                    val hasMic = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+                    if (wake && !hasMic) micPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    else voice.setWakeMode(wake)
+                    showVoiceDialog = false
+                }) { Text("Save") }
+            },
+            dismissButton = { TextButton(onClick = { showVoiceDialog = false }) { Text("Cancel") } }
+        )
+    }
+
+    if (showCloudDialog) {
+        var selProvider by remember { mutableStateOf(cloudCfg.provider) }
+        var keyText by remember { mutableStateOf(cloudCfg.apiKey) }
+        var modelText by remember { mutableStateOf(cloudCfg.model) }
+        var autoHelp by remember { mutableStateOf(cloudCfg.autoHelp) }
+        AlertDialog(
+            onDismissRequest = { showCloudDialog = false },
+            title = { Text("Cloud API Settings") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        CloudProvider.entries.forEach { p ->
+                            FilterChip(
+                                selected = selProvider == p,
+                                onClick = { selProvider = p; modelText = p.defaultModel },
+                                label = { Text(p.label) }
+                            )
+                        }
+                    }
+                    OutlinedTextField(value = keyText, onValueChange = { keyText = it }, label = { Text("${selProvider.label} API Key") }, singleLine = true)
+                    OutlinedTextField(value = modelText, onValueChange = { modelText = it }, label = { Text("Model ID") }, singleLine = true)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Checkbox(checked = autoHelp, onCheckedChange = { autoHelp = it })
+                        Text("Auto-ask Cloud when struggling")
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = { vm.saveCloudConfig(selProvider, keyText, modelText, autoHelp); showCloudDialog = false }) { Text("Save") }
+            },
+            dismissButton = { TextButton(onClick = { showCloudDialog = false }) { Text("Cancel") } }
+        )
     }
 
     if (choices.isNotEmpty()) {
@@ -123,10 +226,7 @@ fun PocketAIScreen(vm: MainViewModel = viewModel()) {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("Which one did you mean?")
                     choices.forEach { el ->
-                        OutlinedButton(
-                            onClick = { vm.selectChoice(el) },
-                            modifier = Modifier.fillMaxWidth()
-                        ) { Text(el.displayLabel.take(45)) }
+                        OutlinedButton(onClick = { vm.selectChoice(el) }, modifier = Modifier.fillMaxWidth()) { Text(el.displayLabel.take(45)) }
                     }
                 }
             },
@@ -140,56 +240,38 @@ fun PocketAIScreen(vm: MainViewModel = viewModel()) {
             onDismissRequest = { vm.confirmPendingAction(false) },
             title = { Text("Confirm Action") },
             text = { Text(action.description) },
-            confirmButton = {
-                Button(onClick = { vm.confirmPendingAction(true) }) {
-                    Text("Allow")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { vm.confirmPendingAction(false) }) {
-                    Text("Deny")
-                }
-            }
+            confirmButton = { Button(onClick = { vm.confirmPendingAction(true) }) { Text("Allow") } },
+            dismissButton = { TextButton(onClick = { vm.confirmPendingAction(false) }) { Text("Deny") } }
         )
     }
 
     Column(modifier = Modifier.fillMaxSize().systemBarsPadding().padding(12.dp)) {
         val header = buildString {
-            append("$status • Memories: $memoryCount • ${if (fastAuto) "Fast" else "LLM"}")
+            append("$status • Mem:$memoryCount • ${if (fastAuto) "Fast" else "LLM"}")
+            if (cloudCfg.apiKey.isNotBlank()) append(" • ${cloudCfg.provider.label}")
+            if (voiceCfg.wakeMode) append(" • Wake")
             if (isListening) append(" • Listening...")
+            activeTask?.let { t -> if (t.status == TaskStatus.RUNNING || t.status == TaskStatus.PAUSED) append(" • ${t.currentStepIndex + 1}/${t.plan.size}") }
             voiceStatus?.let { append(" • $it") }
         }
         Text(text = header, style = MaterialTheme.typography.labelLarge)
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(6.dp))
 
-        Row(
-            modifier = Modifier.horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Button(onClick = { picker.launch(arrayOf("*/*")) }) {
-                Text("Load .gguf")
-            }
-            OutlinedButton(onClick = {
-                context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            }) {
-                Text("Accessibility")
-            }
-            FilterChip(
-                selected = fastAuto,
-                onClick = { vm.toggleFastAuto() },
-                label = { Text("Fast Auto") }
-            )
+            Button(onClick = { showModelsDialog = true }) { Text("Models") }
+            OutlinedButton(onClick = { showCloudDialog = true }) { Text("API") }
+            OutlinedButton(onClick = { showVoiceDialog = true }) { Text("Voice") }
+            OutlinedButton(onClick = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }) { Text("Access") }
+            FilterChip(selected = fastAuto, onClick = { vm.toggleFastAuto() }, label = { Text("Fast") })
             FilterChip(
                 selected = voiceEnabled,
-                onClick = {
-                    voiceEnabled = !voiceEnabled
-                    if (!voiceEnabled) voice.stopSpeaking()
-                },
-                label = { Text(if (voiceEnabled) "Voice On" else "Muted") }
+                onClick = { voiceEnabled = !voiceEnabled; if (!voiceEnabled) voice.stopSpeaking() },
+                label = { Text(if (voiceEnabled) "TTS On" else "Muted") }
             )
-            OutlinedButton(onClick = { vm.clearChat() }) {
-                Text("Clear")
-            }
+            OutlinedButton(onClick = { vm.clearChat() }) { Text("Clear") }
             if (activeTask?.status == TaskStatus.RUNNING) {
                 OutlinedButton(onClick = { vm.pauseTask() }) { Text("Pause") }
             } else if (activeTask?.status == TaskStatus.PAUSED) {
@@ -197,18 +279,13 @@ fun PocketAIScreen(vm: MainViewModel = viewModel()) {
             }
             if (isGenerating || isNavigating) {
                 Button(
-                    onClick = {
-                        voice.stopSpeaking()
-                        vm.stopNavigation()
-                    },
+                    onClick = { voice.stopSpeaking(); vm.stopNavigation() },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                ) {
-                    Text("Stop")
-                }
+                ) { Text("Stop") }
             }
         }
 
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(6.dp))
 
         LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
             items(messages) { msg ->
@@ -223,35 +300,23 @@ fun PocketAIScreen(vm: MainViewModel = viewModel()) {
 
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(
-                value = input,
-                onValueChange = { input = it },
-                modifier = Modifier.weight(1f),
-                placeholder = { Text("Command Ultron or tap Mic...") }
+                value = input, onValueChange = { input = it },
+                modifier = Modifier.weight(1f), placeholder = { Text("Command, question, or Mic") }
             )
             OutlinedButton(
                 enabled = !isGenerating && !isNavigating,
                 onClick = {
-                    if (isListening) {
-                        voice.stopListening()
-                    } else {
-                        val hasMic = ContextCompat.checkSelfPermission(
-                            context, Manifest.permission.RECORD_AUDIO
-                        ) == PackageManager.PERMISSION_GRANTED
+                    if (isListening) voice.stopListening()
+                    else {
+                        val hasMic = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
                         if (hasMic) voice.startListening() else micPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
                     }
                 }
-            ) {
-                Text(if (isListening) "..." else "Mic")
-            }
+            ) { Text(if (isListening) "..." else "Mic") }
             Button(
                 enabled = !isGenerating && !isNavigating,
-                onClick = {
-                    vm.sendMessage(input)
-                    input = ""
-                }
-            ) {
-                Text("Send")
-            }
+                onClick = { vm.sendMessage(input); input = "" }
+            ) { Text("Send") }
         }
     }
 }

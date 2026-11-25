@@ -10,12 +10,8 @@ object PlanValidator {
     private val validDirs = setOf("up", "down", "left", "right")
 
     fun validate(steps: List<PlannedStep>): ValidationResult {
-        if (steps.isEmpty()) {
-            return ValidationResult(false, emptyList(), "No valid actions found in plan")
-        }
-        if (steps.size > 10) {
-            return ValidationResult(false, emptyList(), "Plan exceeds 10-step safety limit")
-        }
+        if (steps.isEmpty()) return ValidationResult(false, emptyList(), "No valid actions found in plan")
+        if (steps.size > 10) return ValidationResult(false, emptyList(), "Plan exceeds 10-step safety limit")
 
         val normalized = mutableListOf<PlannedStep>()
         for (step in steps) {
@@ -24,8 +20,8 @@ object PlanValidator {
                     if (step.target.isBlank()) return ValidationResult(false, emptyList(), "OPEN_APP missing app name")
                     normalized.add(step.copy(requiresConfirmation = true))
                 }
-                TaskAction.SEARCH -> {
-                    if (step.target.isBlank()) return ValidationResult(false, emptyList(), "SEARCH missing query")
+                TaskAction.SEARCH, TaskAction.WEB_SEARCH_NARRATE -> {
+                    if (step.target.isBlank()) return ValidationResult(false, emptyList(), "${step.action} missing query")
                     normalized.add(step)
                 }
                 TaskAction.MESSAGE_CONTACT -> {
@@ -48,7 +44,8 @@ object PlanValidator {
                     if (dir !in validDirs) return ValidationResult(false, emptyList(), "Invalid scroll direction: $dir")
                     normalized.add(step.copy(target = dir))
                 }
-                TaskAction.DOOMSCROLL, TaskAction.BACK, TaskAction.FIND_OPEN_PDF -> normalized.add(step)
+                TaskAction.DOOMSCROLL, TaskAction.BACK, TaskAction.FIND_OPEN_PDF,
+                TaskAction.GO_APP_HOME, TaskAction.ANALYZE_SCREEN -> normalized.add(step)
             }
         }
         return ValidationResult(true, normalized)
