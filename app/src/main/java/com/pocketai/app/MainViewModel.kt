@@ -307,6 +307,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
+        // 4b. Device / Google Files PDF ("open thermodynamics pdf from Google files")
+        if (Regex("""(?i)^open\s+.+?\b(?:pdf|document|file)\b""").containsMatchIn(lowerAll) &&
+            !Regex("""(?i)\b(?:whatsapp|wa)\b""").containsMatchIn(lowerAll)) {
+            val docName = input
+                .replaceFirst(Regex("""(?i)^open\s+(?:the\s+)?"""), "")
+                .replace(Regex("""(?i)\s+(?:from|in|on)\s+(?:google\s+)?files.*$"""), "")
+                .replace(Regex("""(?i)\b(?:pdf|document|file)\b"""), "")
+                .trim()
+            if (docName.isNotBlank()) {
+                return listOf(
+                    PlannedStep(TaskAction.OPEN_APP, target = "Files"),
+                    PlannedStep(TaskAction.SEARCH, target = docName),
+                    PlannedStep(TaskAction.TAP_TARGET, target = docName)
+                )
+            }
+        }
+
         // 5. Standalone "message rahul it is hot here today" (defaults to WhatsApp)
         if (Regex("""(?i)^(?:message|text|tell|whatsapp)\s+""").containsMatchIn(lowerAll)) {
             val body = input.replaceFirst(Regex("""(?i)^(?:message|text|tell|whatsapp)\s+"""), "").trim()
