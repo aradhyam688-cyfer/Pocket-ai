@@ -75,7 +75,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var lastToolTag = ""
     private var consecutiveFailures = 0
     private var lastSearchQuery = ""
-    private var lastSearchQuery = ""
     private var currentAssistantMsgId: Long? = null
     private var cachedFacts: List<String> = emptyList()
     private val maxSteps = 6
