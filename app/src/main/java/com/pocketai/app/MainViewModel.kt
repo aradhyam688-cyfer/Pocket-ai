@@ -95,6 +95,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var lastToolTag = ""
     private var consecutiveFailures = 0
     private var lastSearchQuery = ""
+    private var pendingEmailTo: String? = null
+    private var pendingEmailSubject: String = ""
     private var currentAssistantMsgId: Long? = null
     private var cachedFacts: List<String> = emptyList()
     private val maxSteps = 6
@@ -553,24 +555,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             TaskAction.OPEN_APP -> true to "Opened"
             TaskAction.COMPOSE_EMAIL -> {
                 val parts = step.extra.split("|||", limit = 2)
-                var subject = parts.getOrElse(0) { "" }.ifBlank { "Quick Note" }
+                val subject = parts.getOrElse(0) { "" }.ifBlank { "Quick Note" }
                 var body = parts.getOrElse(1) { "" }
-                if (isLoaded && body.length < 120) {
-                    appendMessage("Tool", "Drafting email with Ultron...")
-                    // Open Gmail/email client directly with clean pre-filled draft
-                } else if (_cloudConfig.value.apiKey.isNotBlank() && body.length < 120) {
+                if (isLoaded && body.length < 140) {
+                    pendingEmailTo = step.target
+                    pendingEmailSubject = subject
+                    _isNavigating.value = false
+                    updateTask { it.copy(status = TaskStatus.COMPLETED) }
+                    activeGoal = "Write a concise, clear, ready-to-send email body about: $body. Output ONLY the email body, no subject line, no [TOOL:] tags."
+                    runNextStep(extraNote = activeGoal)
+                    return true to "Drafting email with Ultron"
+                } else if (_cloudConfig.value.apiKey.isNotBlank() && body.length < 140) {
                     val drafted = CloudHelper.ask(
                         _cloudConfig.value.provider, _cloudConfig.value.apiKey, _cloudConfig.value.model,
                         "Write a concise, professional email body (no subject line, no markdown) about: $body"
                     )
                     if (!drafted.startsWith("Cloud error")) body = drafted
                 }
-                val mailUri = Uri.parse("mailto:" + Uri.encode(step.target) +
-                    "?subject=" + Uri.encode(subject) +
-                    "&body=" + Uri.encode(body))
-                val intent = Intent(Intent.ACTION_SENDTO, mailUri).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
-                getApplication<Application>().startActivity(intent)
-                appendMessage("Tool", "Opened email draft${if (step.target.isNotBlank()) " to ${step.target}" else ""}")
+                launchEmailDraft(step.target, subject, body)
                 true to "Opened email draft"
             }
 
@@ -780,7 +782,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) { llamaHelper.stopPrediction() }
     }
 
+    private fun launchEmailDraft(to: String, subject: String, body: String) {
+        val mailUri = Uri.parse("mailto:" + Uri.encode(to) + "?subject=" + Uri.encode(subject) + "&body=" + Uri.encode(body))
+        val intent = Intent(Intent.ACTION_SENDTO, mailUri).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+        getApplication<Application>().startActivity(intent)
+        appendMessage("Tool", "Opened email draft${if (to.isNotBlank()) " to $to" else ""}")
+    }
+
     private fun handleTurnCompletion() {
+        val emailTo = pendingEmailTo
+        if (emailTo != null) {
+            val emailBody = _messages.value.lastOrNull()?.text.orEmpty()
+                .replace(Regex("""\[TOOL:[^\]]+\]"""), "").trim()
+            val emailSubj = pendingEmailSubject
+            pendingEmailTo = null
+            pendingEmailSubject = ""
+            if (emailBody.isNotBlank()) launchEmailDraft(emailTo, emailSubj, emailBody)
+            return
+        }
         if (!_isNavigating.value) return
         val reply = _messages.value.lastOrNull()?.text.orEmpty()
         val openMatch = openAppRegex.find(reply)
