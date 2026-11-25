@@ -94,10 +94,19 @@ class PocketAccessibilityService : AccessibilityService() {
         return if (obs.packageName == "unavailable") "Screen: unavailable" else obs.toCompressedText()
     }
 
+    private fun isNoiseOrLink(label: String): Boolean {
+        val l = label.lowercase()
+        return l.contains("'s status") ||
+            l.contains("new update") ||
+            l.contains("http://") ||
+            l.contains("https://") ||
+            l.contains("www.")
+    }
+
     fun findMatchingElements(target: String, skipEditable: Boolean = true): List<UiElement> {
         val obs = observeScreen()
         val tNorm = norm(target)
-        val pool = if (skipEditable) obs.elements.filter { !it.isEditable } else obs.elements
+        val pool = (if (skipEditable) obs.elements.filter { !it.isEditable } else obs.elements).filter { !isNoiseOrLink(it.displayLabel) }
         val direct = pool.filter { norm(it.displayLabel).contains(tNorm) }
         if (direct.isNotEmpty()) return direct.distinctBy { norm(it.displayLabel) }.take(4)
 
@@ -118,7 +127,7 @@ class PocketAccessibilityService : AccessibilityService() {
 
     fun findAndTapByText(target: String, skipEditable: Boolean = false): String? {
         val tNorm = norm(target)
-        val pool = if (skipEditable) nodeMap.entries.filter { !it.value.second.isEditable } else nodeMap.entries
+        val pool = (if (skipEditable) nodeMap.entries.filter { !it.value.second.isEditable } else nodeMap.entries).filter { !isNoiseOrLink(it.value.first) }
         val exact = pool.firstOrNull { norm(it.value.first).contains(tNorm) }
         val tokens = target.lowercase().split(Regex("\\s+")).filter { it.length >= 2 }
         val chosen = exact ?: if (tokens.isNotEmpty()) {
