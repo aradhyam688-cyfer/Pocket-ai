@@ -28,8 +28,8 @@ data class CloudConfig(
 )
 data class VoiceConfig(
     val voiceName: String = "",
-    val pitch: Float = 0.85f,
-    val rate: Float = 0.95f,
+    val pitch: Float = 0.68f,
+    val rate: Float = 0.90f,
     val wakeMode: Boolean = false
 )
 
@@ -167,8 +167,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun loadVoiceConfig(): VoiceConfig {
         return VoiceConfig(
             voiceName = prefs.getString("voiceName", "") ?: "",
-            pitch = prefs.getFloat("voicePitch", 0.85f),
-            rate = prefs.getFloat("voiceRate", 0.95f),
+            pitch = prefs.getFloat("voicePitch", 0.68f),
+            rate = prefs.getFloat("voiceRate", 0.90f),
             wakeMode = prefs.getBoolean("wakeMode", false)
         )
     }
@@ -262,6 +262,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
     private fun buildPlan(input: String): List<PlannedStep> {
         val lowerAll = input.lowercase().trim()
+
+        // 0. Email drafting ("email john@x.com about leave", "write an email to ... subject ... body ...")
+        if (Regex("""(?i)^(?:write\s+(?:an?\s+)?)?(?:e?mail|send\s+e?mail)\b""").containsMatchIn(lowerAll)) {
+            val toAddr = Regex("""[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}""").find(input)?.value ?: ""
+            val subjMatch = Regex("""(?i)\bsubject\s+(.+?)(?=\s+\bbody\b|$)""").find(input)
+            val bodyMatch = Regex("""(?i)\bbody\s+(.+)$""").find(input)
+            val aboutMatch = Regex("""(?i)\b(?:about|regarding|for)\s+(.+)$""").find(input)
+            val subj = subjMatch?.groupValues?.get(1)?.trim() ?: aboutMatch?.groupValues?.get(1)?.trim()?.take(60) ?: ""
+            val body = bodyMatch?.groupValues?.get(1)?.trim() ?: aboutMatch?.groupValues?.get(1)?.trim() ?: input
+            return listOf(PlannedStep(TaskAction.COMPOSE_EMAIL, target = toAddr, extra = "$subj|||$body"))
+        }
 
         // 1. Screen analysis ("solve question 12 from the screen", "explain bernoulli theorem in this question")
         if (Regex("""(?i)\b(?:from the screen|on this screen|in this question|this screen|solve question)\b""").containsMatchIn(lowerAll)) {
@@ -506,6 +517,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun runSingleStep(svc: PocketAccessibilityService?, step: PlannedStep): Pair<Boolean, String> {
         return when (step.action) {
             TaskAction.OPEN_APP -> true to "Opened"
+            TaskAction.COMPOSE_EMAIL -> {
+                val parts = step.extra.split("|||", limit = 2)
+                var subject = parts.getOrElse(0) { "" }.ifBlank { "Quick Note" }
+                var body = parts.getOrElse(1) { "" }
+                if (isLoaded && body.length < 120) {
+                    appendMessage("Tool", "Drafting email with Ultron...")
+                    // Open Gmail/email client directly with clean pre-filled draft
+                } else if (_cloudConfig.value.apiKey.isNotBlank() && body.length < 120) {
+                    val drafted = CloudHelper.ask(
+                        _cloudConfig.value.provider, _cloudConfig.value.apiKey, _cloudConfig.value.model,
+                        "Write a concise, professional email body (no subject line, no markdown) about: $body"
+                    )
+                    if (!drafted.startsWith("Cloud error")) body = drafted
+                }
+                val mailUri = Uri.parse("mailto:" + Uri.encode(step.target) +
+                    "?subject=" + Uri.encode(subject) +
+                    "&body=" + Uri.encode(body))
+                val intent = Intent(Intent.ACTION_SENDTO, mailUri).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+                getApplication<Application>().startActivity(intent)
+                appendMessage("Tool", "Opened email draft${if (step.target.isNotBlank()) " to ${step.target}" else ""}")
+                true to "Opened email draft"
+            }
+
             TaskAction.GO_APP_HOME -> {
                 if (svc == null) return false to "Accessibility off"
                 val res = svc.goToAppHome(getApplication(), step.target)

@@ -27,8 +27,15 @@ class VoiceController(
         tts = TextToSpeech(context.applicationContext) { status ->
             if (status == TextToSpeech.SUCCESS) {
                 tts?.language = Locale.US
-                tts?.setPitch(0.85f)
-                tts?.setSpeechRate(0.95f)
+                tts?.setPitch(0.68f)
+                tts?.setSpeechRate(0.90f)
+                val deepVoice = tts?.voices
+                    ?.filter { !it.isNetworkConnectionRequired && it.locale.language == "en" }
+                    ?.firstOrNull {
+                        val n = it.name.lowercase()
+                        n.contains("male") || n.contains("iol") || n.contains("iom") || n.contains("tpd") || n.contains("sfg")
+                    }
+                if (deepVoice != null) tts?.voice = deepVoice
                 ttsReady = true
             }
         }

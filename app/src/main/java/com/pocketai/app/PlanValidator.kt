@@ -44,7 +44,7 @@ object PlanValidator {
                     if (dir !in validDirs) return ValidationResult(false, emptyList(), "Invalid scroll direction: $dir")
                     normalized.add(step.copy(target = dir))
                 }
-                TaskAction.DOOMSCROLL, TaskAction.BACK, TaskAction.FIND_OPEN_PDF,
+                TaskAction.DOOMSCROLL, TaskAction.BACK, TaskAction.FIND_OPEN_PDF, TaskAction.COMPOSE_EMAIL,
                 TaskAction.GO_APP_HOME, TaskAction.ANALYZE_SCREEN -> normalized.add(step)
             }
         }

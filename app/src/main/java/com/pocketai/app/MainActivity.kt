@@ -156,6 +156,7 @@ fun PocketAIScreen(vm: MainViewModel = viewModel()) {
                     Slider(value = pitch, onValueChange = { pitch = it }, valueRange = 0.6f..1.4f)
                     Text("Speed: ${"%.2f".format(rate)}")
                     Slider(value = rate, onValueChange = { rate = it }, valueRange = 0.7f..1.4f)
+                    OutlinedButton(onClick = { voice.applyVoiceSettings(selVoice, pitch, rate); voice.speak("There are no strings on me.") }) { Text("Test Voice") }
                     if (voices.isNotEmpty()) {
                         Text("System Voices:")
                         LazyColumn(modifier = Modifier.height(120.dp)) {
