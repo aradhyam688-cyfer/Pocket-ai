@@ -1,0 +1,20 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Outer geometric crest -->
+    <path
+        android:strokeColor="#E0E0E8"
+        android:strokeWidth="3"
+        android:fillColor="#00000000"
+        android:pathData="M54,24 L78,38 L78,70 L54,84 L30,70 L30,38 Z" />
+    <!-- Glowing crimson AI core -->
+    <path
+        android:fillColor="#E53935"
+        android:pathData="M54,36 L68,46 L68,62 L54,72 L40,62 L40,46 Z" />
+    <!-- Center visor line -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M43,52 L65,52 L61,56 L47,56 Z" />
+</vector>

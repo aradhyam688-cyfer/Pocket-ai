@@ -12,6 +12,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -262,27 +264,55 @@ fun PocketAIScreen(vm: MainViewModel = viewModel()) {
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Button(onClick = { showModelsDialog = true }) { Text("Models") }
-            OutlinedButton(onClick = { showCloudDialog = true }) { Text("API") }
-            OutlinedButton(onClick = { showVoiceDialog = true }) { Text("Voice") }
-            OutlinedButton(onClick = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }) { Text("Access") }
-            FilterChip(selected = fastAuto, onClick = { vm.toggleFastAuto() }, label = { Text("Fast") })
+            FilledTonalIconButton(onClick = { showModelsDialog = true }) {
+                Icon(Icons.Rounded.Memory, contentDescription = "Models")
+            }
+            FilledTonalIconButton(onClick = { showCloudDialog = true }) {
+                Icon(Icons.Rounded.Cloud, contentDescription = "Cloud API")
+            }
+            FilledTonalIconButton(onClick = { showVoiceDialog = true }) {
+                Icon(Icons.Rounded.RecordVoiceOver, contentDescription = "Voice & Wake")
+            }
+            FilledTonalIconButton(onClick = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }) {
+                Icon(Icons.Rounded.AccessibilityNew, contentDescription = "Accessibility")
+            }
+            FilterChip(
+                selected = fastAuto,
+                onClick = { vm.toggleFastAuto() },
+                leadingIcon = { Icon(Icons.Rounded.Bolt, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                label = { Text("Fast") }
+            )
             FilterChip(
                 selected = voiceEnabled,
                 onClick = { voiceEnabled = !voiceEnabled; if (!voiceEnabled) voice.stopSpeaking() },
-                label = { Text(if (voiceEnabled) "TTS On" else "Muted") }
+                leadingIcon = {
+                    Icon(
+                        if (voiceEnabled) Icons.Rounded.VolumeUp else Icons.Rounded.VolumeOff,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                },
+                label = { Text(if (voiceEnabled) "TTS" else "Mute") }
             )
-            OutlinedButton(onClick = { vm.clearChat() }) { Text("Clear") }
+            IconButton(onClick = { vm.clearChat() }) {
+                Icon(Icons.Rounded.DeleteOutline, contentDescription = "Clear Chat")
+            }
             if (activeTask?.status == TaskStatus.RUNNING) {
-                OutlinedButton(onClick = { vm.pauseTask() }) { Text("Pause") }
+                FilledTonalIconButton(onClick = { vm.pauseTask() }) {
+                    Icon(Icons.Rounded.Pause, contentDescription = "Pause")
+                }
             } else if (activeTask?.status == TaskStatus.PAUSED) {
-                Button(onClick = { vm.resumeTask() }) { Text("Resume") }
+                FilledIconButton(onClick = { vm.resumeTask() }) {
+                    Icon(Icons.Rounded.PlayArrow, contentDescription = "Resume")
+                }
             }
             if (isGenerating || isNavigating) {
-                Button(
+                FilledIconButton(
                     onClick = { voice.stopSpeaking(); vm.stopNavigation() },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                ) { Text("Stop") }
+                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Icon(Icons.Rounded.Stop, contentDescription = "Stop")
+                }
             }
         }
 
@@ -304,7 +334,7 @@ fun PocketAIScreen(vm: MainViewModel = viewModel()) {
                 value = input, onValueChange = { input = it },
                 modifier = Modifier.weight(1f), placeholder = { Text("Command, question, or Mic") }
             )
-            OutlinedButton(
+            FilledTonalIconButton(
                 enabled = !isGenerating && !isNavigating,
                 onClick = {
                     if (isListening) voice.stopListening()
@@ -313,11 +343,18 @@ fun PocketAIScreen(vm: MainViewModel = viewModel()) {
                         if (hasMic) voice.startListening() else micPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
                     }
                 }
-            ) { Text(if (isListening) "..." else "Mic") }
-            Button(
+            ) {
+                Icon(
+                    if (isListening) Icons.Rounded.GraphicEq else Icons.Rounded.Mic,
+                    contentDescription = "Voice Input"
+                )
+            }
+            FilledIconButton(
                 enabled = !isGenerating && !isNavigating,
                 onClick = { vm.sendMessage(input); input = "" }
-            ) { Text("Send") }
+            ) {
+                Icon(Icons.Rounded.Send, contentDescription = "Send")
+            }
         }
     }
 }
