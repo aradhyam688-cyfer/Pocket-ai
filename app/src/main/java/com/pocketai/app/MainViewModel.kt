@@ -653,12 +653,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 var links: List<UiElement> = emptyList()
                 for (attempt in 0 until 4) {
                     if (!_isNavigating.value) return false to "Cancelled"
-                    links = svc.findLinksInChat(); if (links.isNotEmpty()) break
-                    svc.scroll("up"); delay(800L)
+                    links = svc!!.findLinksInChat(); if (links.isNotEmpty()) break
+                    svc!!.scroll("up"); delay(800L)
                 }
                 if (links.isEmpty()) return false to "No link found in this chat"
                 val latest = links.first()
-                val res = svc.tap(latest.id)
+                val res = svc!!.tap(latest.id)
                 appendMessage("Tool", "Opening latest link: ${latest.displayLabel.take(45)}")
                 true to res
             }
