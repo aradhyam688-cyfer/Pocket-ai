@@ -656,16 +656,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val res = "$typed (Review & tap Send)"; appendMessage("Tool", res); true to res
             }
             TaskAction.FIND_OPEN_LINK -> {
-                if (!svc!!.observeScreen().elements.any { it.isEditable && it.bounds.bottom > 1000 }) return false to "Not inside a chat"
+                val a = svc ?: return false to "Accessibility off"
+                if (!a.observeScreen().elements.any { it.isEditable && it.bounds.bottom > 1000 }) return false to "Not inside a chat"
                 var links: List<UiElement> = emptyList()
                 for (attempt in 0 until 4) {
                     if (!_isNavigating.value) return false to "Cancelled"
-                    links = svc!!.findLinksInChat(); if (links.isNotEmpty()) break
-                    svc!!.scroll("up"); delay(800L)
+                    links = a.findLinksInChat(); if (links.isNotEmpty()) break
+                    a.scroll("up"); delay(800L)
                 }
                 if (links.isEmpty()) return false to "No link found in this chat"
                 val latest = links.first()
-                val res = svc!!.tap(latest.id)
+                val res = a.tap(latest.id)
                 appendMessage("Tool", "Opening latest link: ${latest.displayLabel.take(45)}")
                 true to res
             }
