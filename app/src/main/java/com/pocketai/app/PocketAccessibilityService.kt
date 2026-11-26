@@ -50,7 +50,7 @@ class PocketAccessibilityService : AccessibilityService() {
             lastCacheTime = now
             kotlin.concurrent.thread(isDaemon = true) {
                 runCatching {
-                    val txt = readFullScreenText(1400, 45)
+                    val txt = readFullScreenText(1400)
                     if (txt.length > 30) lastExternalScreenText = txt
                 }
             }

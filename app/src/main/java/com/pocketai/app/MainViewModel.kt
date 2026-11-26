@@ -920,7 +920,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     runNextStep(extraNote = prompt)
                 } else {
                     val raw = "Messages from ${step.target}:\n$joined"
-                    appendMessage("Assistant", raw); voiceController?.speak(raw)
+                    appendMessage("Assistant", raw)
                 }
                 true to "Summarized ${msgs.size} message(s) from ${step.target}"
             }

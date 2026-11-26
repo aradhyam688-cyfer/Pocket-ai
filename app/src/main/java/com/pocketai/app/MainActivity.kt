@@ -36,9 +36,9 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 
 private val GlassColors = darkColorScheme(
-    primary = accentColor,
+    primary = Color(0xFFA6FF3B),
     onPrimary = Color(0xFF0A0F05),
-    secondary = accentColor,
+    secondary = Color(0xFFA6FF3B),
     secondaryContainer = Color(0x33A6FF3B),
     onSecondaryContainer = Color(0xFFD8FF9C),
     background = Color(0xFF060608),
@@ -50,7 +50,7 @@ private val GlassColors = darkColorScheme(
     error = Color(0xFFFF5252)
 )
 
-private val dynBorder = Brush.linearGradient(listOf(Color(0x48FFFFFF), Color(0x12FFFFFF)))
+private val GlassBorder = Brush.linearGradient(listOf(Color(0x48FFFFFF), Color(0x12FFFFFF)))
 private val GlassFill = Color(0x1AFFFFFF)
 
 class MainActivity : ComponentActivity() {
