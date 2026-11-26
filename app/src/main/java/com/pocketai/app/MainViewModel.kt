@@ -114,6 +114,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var lastSearchQuery = ""
     private var pendingEmailTo: String? = null
     private var pendingMsgPerson: String? = null
+    private var lastContactName: String = ""
     private var pendingEmailSubject: String = ""
     private var currentAssistantMsgId: Long? = null
     private var cachedFacts: List<String> = emptyList()
@@ -318,10 +319,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val q = lowerAll.replaceFirst(Regex("""(?i)^(?:google|look up|search web for)\s+"""), "").trim()
             return listOf(PlannedStep(TaskAction.WEB_SEARCH_NARRATE, target = q))
         }
-        val pdfIntent = Regex("""(?i)\b(?:pdf|document)\b""").containsMatchIn(input) && Regex("""(?i)\b(?:whatsapp|wa)\b""").containsMatchIn(input)
-        if (pdfIntent) {
-            val person = Regex("""(?i)\b(?:with|from|by)\s+([a-zA-Z0-9 ._-]+?)(?=\s*(?:,|\band\b|\bthen\b|\bsent\b|\bon\b|\bin\b|$))""").find(input)?.groupValues?.get(1)?.trim()
-            if (!person.isNullOrBlank()) return listOf(PlannedStep(TaskAction.OPEN_APP, target = "WhatsApp"), PlannedStep(TaskAction.TAP_TARGET, target = person), PlannedStep(TaskAction.FIND_OPEN_PDF))
+        val isWa = Regex("""(?i)\b(?:whatsapp|wa)\b""").containsMatchIn(input)
+        val wantsPdf = Regex("""(?i)\b(?:pdf|document)\b""").containsMatchIn(input)
+        val wantsLink = Regex("""(?i)\blink\b""").containsMatchIn(input)
+        if (isWa && (wantsPdf || wantsLink)) {
+            val rawPerson =
+                Regex("""(?i)\b(?:with|from|by)\s+([a-zA-Z0-9 ._-]+?)(?=\s*(?:,|\band\b|\bthen\b|\bsent\b|\bon\b|\bin\b|$))""").find(input)?.groupValues?.get(1)
+                    ?: Regex("""(?i)\b(?:last|latest)\s+(?:pdf|document|link)\s+([a-zA-Z0-9 ._-]+?)\s+sent\b""").find(input)?.groupValues?.get(1)
+                    ?: Regex("""(?i)\b([a-zA-Z0-9._-]+)'s\s+(?:last|latest)\s+(?:pdf|document|link)\b""").find(input)?.groupValues?.get(1)
+            var person = rawPerson?.trim().orEmpty()
+            if (person.lowercase() in setOf("he", "she", "him", "her", "they") && lastContactName.isNotBlank()) {
+                person = lastContactName
+            }
+            if (person.isNotBlank()) {
+                val finalAction = if (wantsLink) TaskAction.FIND_OPEN_LINK else TaskAction.FIND_OPEN_PDF
+                return listOf(
+                    PlannedStep(TaskAction.OPEN_APP, target = "WhatsApp"),
+                    PlannedStep(TaskAction.TAP_TARGET, target = person),
+                    PlannedStep(finalAction)
+                )
+            }
         }
         if (Regex("""(?i)^open\s+.+?\b(?:pdf|document|file)\b""").containsMatchIn(lowerAll) && !Regex("""(?i)\b(?:whatsapp|wa)\b""").containsMatchIn(lowerAll)) {
             val docName = input.replaceFirst(Regex("""(?i)^open\s+(?:the\s+)?"""), "").replace(Regex("""(?i)\s+(?:from|in|on)\s+(?:google\s+)?files.*$"""), "").replace(Regex("""(?i)\b(?:pdf|document|file)\b"""), "").trim()
@@ -631,6 +648,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (typed == null) return false to "Message box not found"
                 val res = "$typed (Review & tap Send)"; appendMessage("Tool", res); true to res
             }
+            TaskAction.FIND_OPEN_LINK -> {
+                if (!svc!!.observeScreen().elements.any { it.isEditable && it.bounds.bottom > 1000 }) return false to "Not inside a chat"
+                var links: List<UiElement> = emptyList()
+                for (attempt in 0 until 4) {
+                    if (!_isNavigating.value) return false to "Cancelled"
+                    links = svc.findLinksInChat(); if (links.isNotEmpty()) break
+                    svc.scroll("up"); delay(800L)
+                }
+                if (links.isEmpty()) return false to "No link found in this chat"
+                val latest = links.first()
+                val res = svc.tap(latest.id)
+                appendMessage("Tool", "Opening latest link: ${latest.displayLabel.take(45)}")
+                true to res
+            }
             TaskAction.FIND_OPEN_PDF -> {
                 if (!svc!!.observeScreen().elements.any { it.isEditable && it.bounds.bottom > 1000 }) return false to "Not inside a chat"
                 var pdfs: List<UiElement> = emptyList()
@@ -643,7 +674,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 true to "Opened PDF ($tapRes)"
             }
             TaskAction.DOOMSCROLL -> {
-                svc!!.getCompressedScreen(); svc.findAndTapByText("Shorts")?.let { appendMessage("Tool", it); delay(1500L) }
+                for (t in 0 until 5) {
+                    if (!_isNavigating.value) break
+                    val tappedShorts = svc!!.tapBottomNavTab("Shorts") ?: svc.findAndTapByText("Shorts", skipEditable = true)
+                    if (tappedShorts != null) { appendMessage("Tool", tappedShorts); delay(1500L); break }
+                    delay(800L)
+                }
                 appendMessage("Tool", "Watching Shorts (visual bar + thermal guard; tap Stop anytime)...")
                 for (i in 1..30) {
                     if (!_isNavigating.value) break
@@ -669,7 +705,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 false to "Item #$idx not found"
             }
             TaskAction.TAP_TARGET -> {
-                if (_activeTask.value?.let { t -> t.plan.getOrNull(t.currentStepIndex + 1)?.action } == TaskAction.FIND_OPEN_PDF) {
+                val nextAct = _activeTask.value?.let { t -> t.plan.getOrNull(t.currentStepIndex + 1)?.action }
+                if (nextAct == TaskAction.FIND_OPEN_PDF || nextAct == TaskAction.FIND_OPEN_LINK) {
                     val ok = searchAndTapFallback(svc!!, step.target)
                     if (!ok && _choicePrompt.value.isNotEmpty()) {
                         pendingChoiceContinuation = {
@@ -689,10 +726,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     private suspend fun searchAndTapFallback(svc: PocketAccessibilityService, query: String): Boolean {
+        lastContactName = query
+        val obs0 = svc.observeScreen()
+        if (obs0.packageName.contains("whatsapp") && !svc.isOnAppHome(obs0.packageName)) {
+            appendMessage("Tool", svc.goToAppHome(getApplication(), "com.whatsapp"))
+            delay(800L)
+        }
         for (attempt in 0 until 4) {
             if (!_isNavigating.value) return false
             svc.getCompressedScreen()
-            val inputId = svc.findEditableId()
+            val inputId = svc.findTopEditableId()
             if (inputId != null) {
                 svc.typeText(inputId, query, false); delay(1100L)
                 val matches = svc.findMatchingElements(query, skipEditable = true)

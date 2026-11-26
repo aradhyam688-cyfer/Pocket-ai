@@ -511,6 +511,29 @@ class PocketAccessibilityService : AccessibilityService() {
         return if (ok) "Typed \"$text\" into chat" else null
     }
 
+
+    fun findTopEditableId(): Int? {
+        val obs = observeScreen(35)
+        return obs.elements.firstOrNull { it.isEditable && it.bounds.bottom < 850 }?.id
+    }
+
+    fun tapBottomNavTab(label: String): String? {
+        val obs = observeScreen(45)
+        val t = label.lowercase()
+        val tab = obs.elements.firstOrNull {
+            it.isClickable && it.bounds.bottom > 1500 && it.displayLabel.lowercase() == t
+        }
+        return if (tab != null) tap(tab.id) else null
+    }
+
+    fun findLinksInChat(): List<UiElement> {
+        val obs = observeScreen(50)
+        val urlRegex = Regex("""(?i)(?:https?://|www\.|youtube\.com/|youtu\.be/)""")
+        return obs.elements
+            .filter { el -> el.isClickable && !el.isEditable && urlRegex.containsMatchIn(el.displayLabel) }
+            .sortedByDescending { it.bounds.bottom }
+    }
+
     fun findEditableId(): Int? {
         return nodeMap.entries.firstOrNull { it.value.second.isEditable }?.key
     }
