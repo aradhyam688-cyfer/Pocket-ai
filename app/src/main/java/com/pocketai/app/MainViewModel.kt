@@ -682,6 +682,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 true to "Opened PDF ($tapRes)"
             }
             TaskAction.DOOMSCROLL -> {
+                svc!!
                 for (t in 0 until 5) {
                     if (!_isNavigating.value) break
                     val tappedShorts = svc!!.tapBottomNavTab("Shorts") ?: svc.findAndTapByText("Shorts", skipEditable = true)
