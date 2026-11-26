@@ -113,6 +113,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var consecutiveFailures = 0
     private var lastSearchQuery = ""
     private var pendingEmailTo: String? = null
+    private var pendingMsgPerson: String? = null
     private var pendingEmailSubject: String = ""
     private var currentAssistantMsgId: Long? = null
     private var cachedFacts: List<String> = emptyList()
@@ -489,7 +490,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _pendingConfirmation.value = PendingAction("Allow Ultron to open $label ($pkg)?", "[TOOL: open_app|package=$pkg]")
                 return
             }
-            val noSvcActions = setOf(TaskAction.WEB_SEARCH_NARRATE, TaskAction.ANALYZE_SCREEN, TaskAction.COMPOSE_EMAIL, TaskAction.FLASHLIGHT, TaskAction.SET_ALARM, TaskAction.SET_TIMER)
+            val noSvcActions = setOf(TaskAction.WEB_SEARCH_NARRATE, TaskAction.ANALYZE_SCREEN, TaskAction.COMPOSE_EMAIL, TaskAction.THINK_AND_MESSAGE, TaskAction.FLASHLIGHT, TaskAction.SET_ALARM, TaskAction.SET_TIMER)
             if (step.action !in noSvcActions && svc == null) {
                 appendMessage("Tool", "Accessibility service not enabled"); updateTask { it.copy(status = TaskStatus.FAILED) }; _isNavigating.value = false; break
             }
@@ -538,6 +539,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val i = Intent(AlarmClock.ACTION_SET_TIMER).apply { putExtra(AlarmClock.EXTRA_LENGTH, secs); putExtra(AlarmClock.EXTRA_SKIP_UI, false); addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
                 getApplication<Application>().startActivity(i)
                 appendMessage("Tool", "Timer set for ${secs}s"); true to "Timer set"
+            }
+            TaskAction.THINK_AND_MESSAGE -> {
+                if (isLoaded) {
+                    pendingMsgPerson = step.target
+                    _isNavigating.value = true; updateTask { it.copy(status = TaskStatus.COMPLETED) }
+                    activeGoal = "Write a concise, helpful WhatsApp message to ${step.target} about: ${step.extra}. Output ONLY the message text to send, no quotes, no [TOOL:] tags."
+                    runNextStep(extraNote = activeGoal)
+                    return true to "Thinking of message for ${step.target}..."
+                } else if (_cloudConfig.value.apiKey.isNotBlank()) {
+                    val drafted = CloudHelper.ask(_cloudConfig.value.provider, _cloudConfig.value.apiKey, _cloudConfig.value.model, "Write a concise WhatsApp message about: ${step.extra}")
+                    _activeTask.value = AgentTask(originalInstruction = activeGoal, objective = "Send drafted message", plan = listOf(PlannedStep(TaskAction.OPEN_APP, "WhatsApp", requiresConfirmation = true), PlannedStep(TaskAction.MESSAGE_CONTACT, step.target, drafted)), status = TaskStatus.RUNNING)
+                    executeCurrentTask()
+                    return true to "Drafted message via Cloud"
+                } else {
+                    return false to "Load a .gguf model or set a Cloud key for 'think and message'"
+                }
             }
             TaskAction.COMPOSE_EMAIL -> {
                 val parts = step.extra.split("|||", limit = 2)
@@ -651,7 +668,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             TaskAction.TAP_TARGET -> {
                 if (_activeTask.value?.let { t -> t.plan.getOrNull(t.currentStepIndex + 1)?.action } == TaskAction.FIND_OPEN_PDF) {
-                    return if (searchAndTapFallback(svc!!, step.target)) true to "Opened chat: ${step.target}" else false to "Could not open chat for '${step.target}'"
+                    val ok = searchAndTapFallback(svc!!, step.target)
+                    if (!ok && _choicePrompt.value.isNotEmpty()) {
+                        pendingChoiceContinuation = {
+                            updateTask { it.copy(currentStepIndex = it.currentStepIndex + 1, status = TaskStatus.RUNNING) }
+                            _isNavigating.value = true; viewModelScope.launch(Dispatchers.IO) { executeCurrentTask() }
+                        }
+                        return false to "Waiting for user to pick contact"
+                    }
+                    return if (ok) true to "Opened chat: ${step.target}" else false to "Could not open chat for '${step.target}'"
                 }
                 var prev = ""
                 for (attempt in 0 until 3) { val s = svc!!.getCompressedScreen(); svc.findAndTapByText(step.target, true, lastSearchQuery)?.let { appendMessage("Tool", it); return true to it }; if (s == prev) break; prev = s; appendMessage("Tool", svc.scroll("down")); delay(650L) }
@@ -674,12 +699,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     if (exact != null) { appendMessage("Tool", svc.tap(exact.id)); delay(900L); return true }
                     updateTask { it.copy(status = TaskStatus.WAITING_CONFIRMATION) }
                     _choicePrompt.value = matches
-                    if (pendingChoiceContinuation == null) {
-                        pendingChoiceContinuation = {
-                            updateTask { it.copy(currentStepIndex = it.currentStepIndex + 1, status = TaskStatus.RUNNING) }
-                            _isNavigating.value = true; viewModelScope.launch(Dispatchers.IO) { executeCurrentTask() }
-                        }
-                    }
+
                     svc.showFloatingChoices(matches, onPick = { selectChoice(it) }, onCancel = { dismissChoices() })
                     return false
                 }
@@ -721,6 +741,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun handleTurnCompletion() {
+        val msgPerson = pendingMsgPerson
+        if (msgPerson != null) {
+            val msgText = _messages.value.lastOrNull()?.text.orEmpty().replace(Regex("""\[TOOL:[^\]]+\]"""), "").trim()
+            pendingMsgPerson = null
+            if (msgText.isNotBlank()) {
+                _activeTask.value = AgentTask(
+                    originalInstruction = activeGoal,
+                    objective = "Send Ultron's message to $msgPerson",
+                    plan = listOf(
+                        PlannedStep(TaskAction.OPEN_APP, target = "WhatsApp", requiresConfirmation = true),
+                        PlannedStep(TaskAction.MESSAGE_CONTACT, target = msgPerson, extra = msgText)
+                    ),
+                    status = TaskStatus.RUNNING
+                )
+                _isNavigating.value = true
+                viewModelScope.launch(Dispatchers.IO) { executeCurrentTask() }
+            }
+            return
+        }
         val emailTo = pendingEmailTo
         if (emailTo != null) {
             val emailBody = _messages.value.lastOrNull()?.text.orEmpty().replace(Regex("""\[TOOL:[^\]]+\]"""), "").trim()
