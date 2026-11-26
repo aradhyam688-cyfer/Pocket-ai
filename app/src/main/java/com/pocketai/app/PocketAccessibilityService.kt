@@ -128,7 +128,9 @@ class PocketAccessibilityService : AccessibilityService() {
 
     private fun collectText(node: AccessibilityNodeInfo, depth: Int = 0): String {
         if (node.isPassword || depth > 5) return ""
-        val own = (node.text ?: node.contentDescription ?: "").toString().trim()
+        val ownRaw = (node.text ?: node.contentDescription ?: "").toString().trim()
+        val isAvatar = node.className?.toString()?.endsWith("ImageView") == true && ownRaw.lowercase().endsWith("picture")
+        val own = if (isAvatar) "" else ownRaw
         if (own.isNotEmpty()) return own
         val parts = mutableListOf<String>()
         for (i in 0 until node.childCount) {
@@ -261,12 +263,13 @@ class PocketAccessibilityService : AccessibilityService() {
     }
 
     private fun isNoiseOrLink(label: String): Boolean {
-        val l = label.lowercase()
+        val l = label.lowercase().trim()
         return l.contains("'s status") ||
             l.contains("new update") ||
-            l.contains("http://") ||
-            l.contains("https://") ||
-            l.contains("www.")
+            l == "status" || l == "updates" || l == "links" ||
+            l.startsWith("http://") ||
+            l.startsWith("https://") ||
+            l.startsWith("www.")
     }
 
 

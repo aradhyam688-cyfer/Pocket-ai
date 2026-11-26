@@ -1,5 +1,6 @@
 package com.pocketai.app
 
+import android.net.Uri
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -13,13 +14,30 @@ enum class CloudProvider(val label: String, val defaultModel: String) {
 
 object CloudHelper {
 
-    fun ask(
-        provider: CloudProvider,
-        apiKey: String,
-        model: String,
-        prompt: String
-    ): String {
-        if (apiKey.isBlank()) return "Cloud Help: No API key set. Tap 'Cloud' to add one."
+    fun fetchWebText(query: String): String {
+        return try {
+            val url = URL("https://html.duckduckgo.com/html/?q=" + Uri.encode(query))
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 8000
+                readTimeout = 10000
+                setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 15)")
+            }
+            val html = conn.inputStream.bufferedReader().use { it.readText() }
+            val snippets = Regex("""class="result__snippet"[^>]*>(.*?)</a>""", RegexOption.DOT_MATCHES_ALL)
+                .findAll(html)
+                .map { it.groupValues[1].replace(Regex("<[^>]+>"), "").replace("&amp;", "&").replace("&#x27;", "'").trim() }
+                .filter { it.isNotBlank() }
+                .take(4)
+                .toList()
+            if (snippets.isNotEmpty()) snippets.joinToString("\n- ", prefix = "- ") else ""
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
+    fun ask(provider: CloudProvider, apiKey: String, model: String, prompt: String): String {
+        if (apiKey.isBlank()) return "Cloud Help: No API key set. Tap API to add one."
         val chosenModel = model.ifBlank { provider.defaultModel }
         return try {
             when (provider) {
@@ -28,65 +46,36 @@ object CloudHelper {
                 CloudProvider.CLAUDE -> callClaude(apiKey.trim(), chosenModel, prompt)
             }
         } catch (e: Exception) {
-            "Cloud error (${provider.label}): ${e.message}"
+            "Cloud error (${provider.label}):${e.message}"
         }
     }
 
     private fun callGemini(key: String, model: String, prompt: String): String {
         val url = URL("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$key")
-        val body = JSONObject().apply {
-            put("contents", JSONArray().put(JSONObject().apply {
-                put("parts", JSONArray().put(JSONObject().apply { put("text", prompt) }))
-            }))
-        }
+        val body = JSONObject().put("contents", JSONArray().put(JSONObject().put("parts", JSONArray().put(JSONObject().put("text", prompt)))))
         val resp = postJson(url, body.toString(), emptyMap())
-        return JSONObject(resp)
-            .getJSONArray("candidates").getJSONObject(0)
-            .getJSONObject("content").getJSONArray("parts")
-            .getJSONObject(0).getString("text").trim()
+        return JSONObject(resp).getJSONArray("candidates").getJSONObject(0)
+            .getJSONObject("content").getJSONArray("parts").getJSONObject(0).getString("text").trim()
     }
 
     private fun callOpenAI(key: String, model: String, prompt: String): String {
         val url = URL("https://api.openai.com/v1/chat/completions")
-        val body = JSONObject().apply {
-            put("model", model)
-            put("messages", JSONArray().put(JSONObject().apply {
-                put("role", "user")
-                put("content", prompt)
-            }))
-        }
+        val body = JSONObject().put("model", model).put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", prompt)))
         val resp = postJson(url, body.toString(), mapOf("Authorization" to "Bearer $key"))
-        return JSONObject(resp)
-            .getJSONArray("choices").getJSONObject(0)
-            .getJSONObject("message").getString("content").trim()
+        return JSONObject(resp).getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content").trim()
     }
 
     private fun callClaude(key: String, model: String, prompt: String): String {
         val url = URL("https://api.anthropic.com/v1/messages")
-        val body = JSONObject().apply {
-            put("model", model)
-            put("max_tokens", 512)
-            put("messages", JSONArray().put(JSONObject().apply {
-                put("role", "user")
-                put("content", prompt)
-            }))
-        }
-        val headers = mapOf(
-            "x-api-key" to key,
-            "anthropic-version" to "2023-06-01"
-        )
-        val resp = postJson(url, body.toString(), headers)
-        return JSONObject(resp)
-            .getJSONArray("content").getJSONObject(0)
-            .getString("text").trim()
+        val body = JSONObject().put("model", model).put("max_tokens", 512)
+            .put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", prompt)))
+        val resp = postJson(url, body.toString(), mapOf("x-api-key" to key, "anthropic-version" to "2023-06-01"))
+        return JSONObject(resp).getJSONArray("content").getJSONObject(0).getString("text").trim()
     }
 
     private fun postJson(url: URL, jsonBody: String, headers: Map<String, String>): String {
         val conn = (url.openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
-            connectTimeout = 15000
-            readTimeout = 30000
-            doOutput = true
+            requestMethod = "POST"; connectTimeout = 15000; readTimeout = 30000; doOutput = true
             setRequestProperty("Content-Type", "application/json")
             headers.forEach { (k, v) -> setRequestProperty(k, v) }
         }
@@ -94,7 +83,7 @@ object CloudHelper {
         val code = conn.responseCode
         val stream = if (code in 200..299) conn.inputStream else conn.errorStream
         val text = stream.bufferedReader().use { it.readText() }
-        if (code !in 200..299) throw RuntimeException("HTTP $code: ${text.take(180)}")
+        if (code !in 200..299) throw RuntimeException("HTTP $code:${text.take(180)}")
         return text
     }
 }

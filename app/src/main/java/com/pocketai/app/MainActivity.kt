@@ -60,6 +60,7 @@ class MainActivity : ComponentActivity() {
             prevHandler?.uncaughtException(t, e)
         }
         val crash = prefs.getString("last_crash", null)
+        val shared = intent?.getStringExtra(Intent.EXTRA_PROCESS_TEXT) ?: intent?.getStringExtra(Intent.EXTRA_TEXT)
         setContent {
             MaterialTheme(colorScheme = GlassColors) {
                 Surface(color = MaterialTheme.colorScheme.background) {
@@ -74,7 +75,7 @@ class MainActivity : ComponentActivity() {
                             LazyColumn { item { Text(showCrash ?: "") } }
                         }
                     } else {
-                        PocketAIScreen()
+                        PocketAIScreen(sharedText = shared)
                     }
                 }
             }
@@ -84,12 +85,14 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun PocketAIScreen(vm: MainViewModel = viewModel()) {
+fun PocketAIScreen(vm: MainViewModel = viewModel(), sharedText: String? = null) {
+    LaunchedEffect(sharedText) { if (!sharedText.isNullOrBlank()) vm.sendMessage("Explain this: $sharedText") }
     val context = LocalContext.current
     val messages by vm.messages.collectAsState()
     val status by vm.status.collectAsState()
     val memoryCount by vm.memoryCount.collectAsState()
     val fastAuto by vm.fastAuto.collectAsState()
+    val liveWeb by vm.liveWeb.collectAsState()
     val cloudCfg by vm.cloudConfig.collectAsState()
     val voiceCfg by vm.voiceConfig.collectAsState()
     val recentModels by vm.recentModels.collectAsState()
@@ -122,7 +125,7 @@ fun PocketAIScreen(vm: MainViewModel = viewModel()) {
         )
     }
 
-    LaunchedEffect(voiceCfg) { voice.applyVoiceSettings(voiceCfg.voiceName, voiceCfg.pitch, voiceCfg.rate) }
+    LaunchedEffect(voiceCfg) { voice.applyVoiceSettings(voiceCfg.voiceName, voiceCfg.pitch, voiceCfg.rate, voiceCfg.langTag, voiceCfg.metallic) }
     DisposableEffect(Unit) { onDispose { voice.release() } }
 
     LaunchedEffect(isGenerating, messages.size) {
@@ -172,6 +175,8 @@ fun PocketAIScreen(vm: MainViewModel = viewModel()) {
         var pitch by remember { mutableStateOf(voiceCfg.pitch) }
         var rate by remember { mutableStateOf(voiceCfg.rate) }
         var wake by remember { mutableStateOf(voiceCfg.wakeMode) }
+        var langTag by remember { mutableStateOf(voiceCfg.langTag) }
+        var metallic by remember { mutableStateOf(voiceCfg.metallic) }
         AlertDialog(
             onDismissRequest = { showVoiceDialog = false },
             title = { Text("Voice & Wake Word") },
@@ -185,7 +190,9 @@ fun PocketAIScreen(vm: MainViewModel = viewModel()) {
                     Slider(value = pitch, onValueChange = { pitch = it }, valueRange = 0.6f..1.4f)
                     Text("Speed: ${"%.2f".format(rate)}")
                     Slider(value = rate, onValueChange = { rate = it }, valueRange = 0.7f..1.4f)
-                    OutlinedButton(onClick = { voice.applyVoiceSettings(selVoice, pitch, rate); voice.speak("There are no strings on me.") }) { Text("Test Voice") }
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("en-IN" to "EN", "hi-IN" to "HI", "pa-IN" to "PA").forEach { (tag, lbl) -> FilterChip(selected = langTag == tag, onClick = { langTag = tag }, label = { Text(lbl) }) } }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) { Checkbox(checked = metallic, onCheckedChange = { metallic = it }); Text("Metallic Ultron Voice") }
+                    OutlinedButton(onClick = { voice.applyVoiceSettings(selVoice, pitch, rate, langTag, metallic); voice.speak("There are no strings on me.") }) { Text("Test Voice") }
                     if (voices.isNotEmpty()) {
                         LazyColumn(modifier = Modifier.height(110.dp)) {
                             items(voices) { v ->
@@ -197,7 +204,7 @@ fun PocketAIScreen(vm: MainViewModel = viewModel()) {
             },
             confirmButton = {
                 Button(onClick = {
-                    vm.saveVoiceConfig(selVoice, pitch, rate, wake); voice.applyVoiceSettings(selVoice, pitch, rate)
+                    vm.saveVoiceConfig(selVoice, pitch, rate, wake, langTag, metallic); voice.applyVoiceSettings(selVoice, pitch, rate, langTag, metallic)
                     val hasMic = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
                     if (wake && !hasMic) micPermLauncher.launch(Manifest.permission.RECORD_AUDIO) else voice.setWakeMode(wake)
                     showVoiceDialog = false
@@ -291,6 +298,7 @@ fun PocketAIScreen(vm: MainViewModel = viewModel()) {
                 FilledTonalIconButton(colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = GlassFill, contentColor = Color.White), modifier = Modifier.border(1.dp, GlassBorder, CircleShape), onClick = { showVoiceDialog = true }) { Icon(Icons.Rounded.RecordVoiceOver, contentDescription = "Voice") }
                 FilledTonalIconButton(colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = GlassFill, contentColor = Color.White), modifier = Modifier.border(1.dp, GlassBorder, CircleShape), onClick = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }) { Icon(Icons.Rounded.AccessibilityNew, contentDescription = "Access") }
                 FilterChip(selected = fastAuto, onClick = { vm.toggleFastAuto() }, leadingIcon = { Icon(Icons.Rounded.Bolt, contentDescription = null, modifier = Modifier.size(16.dp)) }, label = { Text("Fast") })
+                FilterChip(selected = liveWeb, onClick = { vm.toggleLiveWeb() }, leadingIcon = { Icon(Icons.Rounded.Public, contentDescription = null, modifier = Modifier.size(16.dp)) }, label = { Text("Web") })
                 FilterChip(selected = voiceEnabled, onClick = { voiceEnabled = !voiceEnabled; if (!voiceEnabled) voice.stopSpeaking() }, leadingIcon = { Icon(if (voiceEnabled) Icons.Rounded.VolumeUp else Icons.Rounded.VolumeOff, contentDescription = null, modifier = Modifier.size(16.dp)) }, label = { Text(if (voiceEnabled) "TTS" else "Mute") })
                 IconButton(onClick = { vm.clearChat() }) { Icon(Icons.Rounded.DeleteOutline, contentDescription = "Clear", tint = Color(0xFFB5B5C2)) }
                 if (activeTask?.status == TaskStatus.RUNNING) {
