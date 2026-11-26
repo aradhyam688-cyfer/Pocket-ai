@@ -544,11 +544,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (isLoaded) {
                     pendingMsgPerson = step.target
                     _isNavigating.value = true; updateTask { it.copy(status = TaskStatus.COMPLETED) }
-                    activeGoal = "Write a concise, helpful WhatsApp message to ${step.target} about: ${step.extra}. Output ONLY the message text to send, no quotes, no [TOOL:] tags."
+                    val webCtx = maybeFetchTopicWeb(step.extra)
+                    activeGoal = "Write a concise, helpful WhatsApp message to ${step.target} about: ${step.extra}.$webCtx Output ONLY the message text to send, no quotes, no [TOOL:] tags."
                     runNextStep(extraNote = activeGoal)
                     return true to "Thinking of message for ${step.target}..."
                 } else if (_cloudConfig.value.apiKey.isNotBlank()) {
-                    val drafted = CloudHelper.ask(_cloudConfig.value.provider, _cloudConfig.value.apiKey, _cloudConfig.value.model, "Write a concise WhatsApp message about: ${step.extra}")
+                    val drafted = CloudHelper.ask(_cloudConfig.value.provider, _cloudConfig.value.apiKey, _cloudConfig.value.model, "Write a concise WhatsApp message about: ${step.extra}${maybeFetchTopicWeb(step.extra)}")
                     _activeTask.value = AgentTask(originalInstruction = activeGoal, objective = "Send drafted message", plan = listOf(PlannedStep(TaskAction.OPEN_APP, "WhatsApp", requiresConfirmation = true), PlannedStep(TaskAction.MESSAGE_CONTACT, step.target, drafted)), status = TaskStatus.RUNNING)
                     executeCurrentTask()
                     return true to "Drafted message via Cloud"
@@ -563,11 +564,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (isLoaded && body.length < 140) {
                     pendingEmailTo = step.target; pendingEmailSubject = subject
                     _isNavigating.value = true; updateTask { it.copy(status = TaskStatus.COMPLETED) }
-                    activeGoal = "Write a concise, clear, ready-to-send email body about: $body. Output ONLY the email body, no subject line, no [TOOL:] tags."
+                    val webCtx = maybeFetchTopicWeb(body)
+                    activeGoal = "Write a concise, clear, ready-to-send email body about: $body.$webCtx Output ONLY the email body, no subject line, no [TOOL:] tags."
                     runNextStep(extraNote = activeGoal)
                     return true to "Drafting email with Ultron"
                 } else if (_cloudConfig.value.apiKey.isNotBlank() && body.length < 140) {
-                    val d = CloudHelper.ask(_cloudConfig.value.provider, _cloudConfig.value.apiKey, _cloudConfig.value.model, "Write a concise email body about: $body")
+                    val d = CloudHelper.ask(_cloudConfig.value.provider, _cloudConfig.value.apiKey, _cloudConfig.value.model, "Write a concise email body about: $body${maybeFetchTopicWeb(body)}")
                     if (!d.startsWith("Cloud error")) body = d
                 }
                 launchEmailDraft(step.target, subject, body); true to "Opened email draft"
@@ -707,6 +709,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } else { if (svc.findAndTapByText("search") != null) delay(800L) else delay(500L) }
         }
         return false
+    }
+
+    private fun maybeFetchTopicWeb(topic: String): String {
+        val needsWeb = _liveWeb.value || Regex("""(?i)\b(?:rate|rates|price|future|futures|market|current|today|news|weather|score|data|trade|trades|situation)\b""").containsMatchIn(topic)
+        if (!needsWeb) return ""
+        val web = CloudHelper.fetchWebText(topic)
+        return if (web.isNotBlank()) {
+            appendMessage("Tool", "Fetched live web data for: ${topic.take(40)}")
+            "\nLive web data:\n$web\nInclude relevant facts/figures from this data.\n"
+        } else ""
     }
 
     private fun launchEmailDraft(to: String, subject: String, body: String) {
