@@ -556,6 +556,26 @@ class PocketAccessibilityService : AccessibilityService() {
         return if (ok) "Swiped $dir" else "Cannot scroll $dir"
     }
 
+
+    fun pinchZoom(zoomIn: Boolean): String {
+        val dm = resources.displayMetrics
+        val w = dm.widthPixels.toFloat()
+        val h = dm.heightPixels.toFloat()
+        val p1 = Path()
+        val p2 = Path()
+        if (zoomIn) {
+            p1.moveTo(w * 0.45f, h * 0.48f); p1.lineTo(w * 0.20f, h * 0.35f)
+            p2.moveTo(w * 0.55f, h * 0.52f); p2.lineTo(w * 0.80f, h * 0.65f)
+        } else {
+            p1.moveTo(w * 0.20f, h * 0.35f); p1.lineTo(w * 0.45f, h * 0.48f)
+            p2.moveTo(w * 0.80f, h * 0.65f); p2.lineTo(w * 0.55f, h * 0.52f)
+        }
+        val s1 = GestureDescription.StrokeDescription(p1, 0L, 300L)
+        val s2 = GestureDescription.StrokeDescription(p2, 0L, 300L)
+        val ok = dispatchGesture(GestureDescription.Builder().addStroke(s1).addStroke(s2).build(), null, null)
+        return if (ok) (if (zoomIn) "Zoomed in" else "Zoomed out") else "Zoom gesture failed"
+    }
+
     fun scrollDown(): String = scroll("down")
 
     fun typeText(id: Int, text: String, submit: Boolean = true): String {

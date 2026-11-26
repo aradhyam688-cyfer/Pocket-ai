@@ -373,6 +373,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 lower.startsWith("search for ") -> steps.add(PlannedStep(TaskAction.SEARCH, target = c.substring(11).trim()))
                 lower.startsWith("search ") -> steps.add(PlannedStep(TaskAction.SEARCH, target = c.substring(7).trim()))
+                lower.startsWith("zoom ") -> steps.add(PlannedStep(TaskAction.ZOOM, target = if (lower.contains("in")) "in" else "out"))
                 lower.startsWith("scroll ") -> steps.add(PlannedStep(TaskAction.SCROLL, target = lower.removePrefix("scroll ").trim()))
                 lower == "back" || lower == "go back" -> steps.add(PlannedStep(TaskAction.BACK))
                 lower.startsWith("tap ") || lower.startsWith("click ") || lower.startsWith("select ") -> {
@@ -606,7 +607,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 true to "Narrated web search"
             }
             TaskAction.ANALYZE_SCREEN -> {
-                val screenText = svc?.let { val c = it.readFullScreenText(2200); if (it.observeScreen().packageName == "com.pocketai.app" || c.length < 40) it.lastExternalScreenText else c }.orEmpty()
+                var screenText = svc?.let { val c = it.readFullScreenText(2200); if (it.observeScreen().packageName == "com.pocketai.app" || c.length < 40) it.lastExternalScreenText else c }.orEmpty()
+                if (svc != null && svc.observeScreen().packageName != "com.pocketai.app" && screenText.length < 180) {
+                    appendMessage("Tool", svc.pinchZoom(zoomIn = false))
+                    delay(700L)
+                    val expanded = svc.readFullScreenText(2200)
+                    if (expanded.length > screenText.length) screenText = expanded
+                }
                 if (screenText.isBlank()) return false to "No readable screen text captured yet—open the question screen first."
                 val qp = "Screen text from another app:\n$screenText\n\nUser request: ${step.target}\nSolve or explain clearly in English."
                 if (isLoaded) { _isNavigating.value = true; activeGoal = step.target; runNextStep(extraNote = qp) }
@@ -721,6 +728,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 for (attempt in 0 until 3) { val s = svc!!.getCompressedScreen(); svc.findAndTapByText(step.target, true, lastSearchQuery)?.let { appendMessage("Tool", it); return true to it }; if (s == prev) break; prev = s; appendMessage("Tool", svc.scroll("down")); delay(650L) }
                 false to "Target '${step.target}' not visible"
             }
+            TaskAction.ZOOM -> { val r = svc?.pinchZoom(step.target == "in") ?: "Access off"; appendMessage("Tool", r); true to r }
             TaskAction.SCROLL -> { val r = svc?.scroll(step.target) ?: "Access off"; appendMessage("Tool", r); true to r }
             TaskAction.BACK -> { val r = svc?.pressBack() ?: "Access off"; appendMessage("Tool", r); true to r }
         }
