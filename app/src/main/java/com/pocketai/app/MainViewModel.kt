@@ -202,7 +202,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         saveRecentModel(label, uriString)
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
-                llamaHelper.load(path = uriString, contextLength = 2048) {
+                llamaHelper.load(path = uriString, contextLength = 1024) {
                     isLoaded = true
                     _status.value = "Ready ($label)"
                 }
