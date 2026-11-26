@@ -16,6 +16,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -33,9 +36,9 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 
 private val GlassColors = darkColorScheme(
-    primary = Color(0xFFA6FF3B),
+    primary = accentColor,
     onPrimary = Color(0xFF0A0F05),
-    secondary = Color(0xFFA6FF3B),
+    secondary = accentColor,
     secondaryContainer = Color(0x33A6FF3B),
     onSecondaryContainer = Color(0xFFD8FF9C),
     background = Color(0xFF060608),
@@ -47,7 +50,7 @@ private val GlassColors = darkColorScheme(
     error = Color(0xFFFF5252)
 )
 
-private val GlassBorder = Brush.linearGradient(listOf(Color(0x48FFFFFF), Color(0x12FFFFFF)))
+private val dynBorder = Brush.linearGradient(listOf(Color(0x48FFFFFF), Color(0x12FFFFFF)))
 private val GlassFill = Color(0x1AFFFFFF)
 
 class MainActivity : ComponentActivity() {
@@ -67,6 +70,31 @@ class MainActivity : ComponentActivity() {
                     var showCrash by remember { mutableStateOf(crash) }
                     if (showCrash != null) {
                         Column(modifier = Modifier.fillMaxSize().systemBarsPadding().padding(12.dp)) {
+            if (activeTab == 1) {
+                Column(modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Updates & Credits", style = MaterialTheme.typography.titleLarge, color = accentColor)
+                    Surface(color = GlassFill, shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, dynBorder), modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("Credits", style = MaterialTheme.typography.titleMedium, color = accentColor)
+                            Text("• Creator & Lead Developer: aradhyam688-cyfer", color = Color(0xFFF0F0F5))
+                            Text("• Co-Architect & AI Engineering: Gemini", color = Color(0xFFF0F0F5))
+                            Text("• Engine & Stack: llamacpp-kotlin, Qwen2.5 / Unsloth, Jetpack Compose & Room", style = MaterialTheme.typography.bodySmall, color = Color(0xFFB5B5C2))
+                        }
+                    }
+                    Surface(color = GlassFill, shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, dynBorder), modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("Changelog", style = MaterialTheme.typography.titleMedium, color = accentColor)
+                            Text("v2.1 — Zero-ANR & Full Upgrade", color = Color.White)
+                            Text("• Offloaded Accessibility scans off main thread + added Ultra-Light/Balanced/Max presets\n• Upgraded Ultron metallic DSP voice + persistent settings\n• Added Mix (Hinglish + Punjabi + Hindi) voice & script normalizer\n• Added Call <contact> (WhatsApp or Phone), date-aware WhatsApp links, and incoming message summarizer\n• Added Live Web Facts in chat, categorized /help, Auto Chat-Templates & Theme Colors", style = MaterialTheme.typography.bodySmall, color = Color(0xFFB5B5C2))
+                        }
+                    }
+                }
+                NavigationBar(containerColor = Color(0xCC0D0D12)) {
+                    NavigationBarItem(selected = false, onClick = { activeTab = 0 }, icon = { Icon(Icons.Rounded.SmartToy, null) }, label = { Text("Assistant") })
+                    NavigationBarItem(selected = true, onClick = { activeTab = 1 }, icon = { Icon(Icons.Rounded.Info, null) }, label = { Text("Updates") })
+                }
+                return@Box
+            }
                             Button(onClick = {
                                 prefs.edit().remove("last_crash").apply()
                                 showCrash = null
@@ -103,6 +131,12 @@ fun PocketAIScreen(vm: MainViewModel = viewModel(), sharedText: String? = null) 
     val pending by vm.pendingConfirmation.collectAsState()
     val activeTask by vm.activeTask.collectAsState()
     val choices by vm.choicePrompt.collectAsState()
+    val themeCfg by vm.themeConfig.collectAsState()
+    val pendingCall by vm.pendingCallContact.collectAsState()
+    val ramTemp by vm.ramTemp.collectAsState()
+    var activeTab by remember { mutableStateOf(0) }
+    var showThemeDialog by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { vm.refreshRamTemp() }
 
     var input by remember { mutableStateOf("") }
     var voiceEnabled by remember { mutableStateOf(true) }
@@ -150,33 +184,66 @@ fun PocketAIScreen(vm: MainViewModel = viewModel(), sharedText: String? = null) 
         }
     }
     if (showParamsDialog) {
+        var preset by remember { mutableStateOf(modelCfg.preset) }
         var ctx by remember { mutableStateOf(modelCfg.contextLength.toString()) }
         var turns by remember { mutableStateOf(modelCfg.historyTurns.toString()) }
+        var threads by remember { mutableStateOf(modelCfg.threads.toString()) }
+        var maxTok by remember { mutableStateOf(modelCfg.maxTokens.toString()) }
         var temp by remember { mutableStateOf(modelCfg.temperature.toString()) }
         var topP by remember { mutableStateOf(modelCfg.topP.toString()) }
+        var autoUnload by remember { mutableStateOf(modelCfg.autoUnloadOnBg) }
+        var tpl by remember { mutableStateOf(modelCfg.chatTemplate) }
         var sysP by remember { mutableStateOf(modelCfg.systemPrompt) }
         AlertDialog(
             onDismissRequest = { showParamsDialog = false },
-            title = { Text("Model Parameters") },
+            title = { Text("Optimization & Parameters") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    OutlinedTextField(value = ctx, onValueChange = { ctx = it }, label = { Text("Context Size (n_ctx)") }, singleLine = true)
-                    OutlinedTextField(value = turns, onValueChange = { turns = it }, label = { Text("History Turns") }, singleLine = true)
+                Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf("Ultra-Light", "Balanced", "Max").forEach { pName ->
+                            FilterChip(selected = preset == pName, onClick = {
+                                preset = pName
+                                when (pName) {
+                                    "Ultra-Light" -> { ctx = "512"; threads = "2"; maxTok = "128"; turns = "4"; autoUnload = true }
+                                    "Balanced" -> { ctx = "1024"; threads = "4"; maxTok = "256"; turns = "6"; autoUnload = false }
+                                    "Max" -> { ctx = "2048"; threads = "6"; maxTok = "512"; turns = "8"; autoUnload = false }
+                                }
+                            }, label = { Text(pName) })
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        OutlinedTextField(value = ctx, onValueChange = { ctx = it }, label = { Text("n_ctx") }, modifier = Modifier.weight(1f), singleLine = true)
+                        OutlinedTextField(value = threads, onValueChange = { threads = it }, label = { Text("Threads") }, modifier = Modifier.weight(1f), singleLine = true)
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        OutlinedTextField(value = maxTok, onValueChange = { maxTok = it }, label = { Text("Max Tok") }, modifier = Modifier.weight(1f), singleLine = true)
+                        OutlinedTextField(value = turns, onValueChange = { turns = it }, label = { Text("History") }, modifier = Modifier.weight(1f), singleLine = true)
+                    }
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         OutlinedTextField(value = temp, onValueChange = { temp = it }, label = { Text("Temp") }, modifier = Modifier.weight(1f), singleLine = true)
                         OutlinedTextField(value = topP, onValueChange = { topP = it }, label = { Text("Top-p") }, modifier = Modifier.weight(1f), singleLine = true)
                     }
-                    OutlinedTextField(value = sysP, onValueChange = { sysP = it }, label = { Text("Custom System Prompt (optional)") }, maxLines = 3)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf("AUTO", "CHATML", "LLAMA3", "GEMMA").forEach { tName ->
+                            FilterChip(selected = tpl == tName, onClick = { tpl = tName }, label = { Text(tName) })
+                        }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = autoUnload, onCheckedChange = { autoUnload = it })
+                        Text("Auto-free RAM in background")
+                    }
+                    OutlinedTextField(value = sysP, onValueChange = { sysP = it }, label = { Text("Custom System Prompt") }, maxLines = 2)
                 }
             },
             confirmButton = {
                 Button(onClick = {
                     vm.saveModelConfig(modelCfg.copy(
-                        contextLength = ctx.toIntOrNull() ?: 1024,
+                        preset = preset, contextLength = ctx.toIntOrNull() ?: 1024,
+                        threads = (threads.toIntOrNull() ?: 4).coerceIn(1, 8),
+                        maxTokens = (maxTok.toIntOrNull() ?: 256).coerceIn(64, 1024),
                         historyTurns = turns.toIntOrNull() ?: 6,
-                        temperature = temp.toFloatOrNull() ?: 0.7f,
-                        topP = topP.toFloatOrNull() ?: 0.9f,
-                        systemPrompt = sysP
+                        temperature = temp.toFloatOrNull() ?: 0.7f, topP = topP.toFloatOrNull() ?: 0.9f,
+                        autoUnloadOnBg = autoUnload, chatTemplate = tpl, systemPrompt = sysP
                     ))
                     showParamsDialog = false
                 }) { Text("Save") }
@@ -229,7 +296,7 @@ fun PocketAIScreen(vm: MainViewModel = viewModel(), sharedText: String? = null) 
                     Slider(value = pitch, onValueChange = { pitch = it }, valueRange = 0.6f..1.4f)
                     Text("Speed: ${"%.2f".format(rate)}")
                     Slider(value = rate, onValueChange = { rate = it }, valueRange = 0.7f..1.4f)
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("en-IN" to "EN", "hi-IN" to "HI", "pa-IN" to "PA").forEach { (tag, lbl) -> FilterChip(selected = langTag == tag, onClick = { langTag = tag }, label = { Text(lbl) }) } }
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("mix" to "Mix", "en-IN" to "EN", "hi-IN" to "HI", "pa-IN" to "PA").forEach { (tag, lbl) -> FilterChip(selected = langTag == tag, onClick = { langTag = tag }, label = { Text(lbl) }) } }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) { Checkbox(checked = metallic, onCheckedChange = { metallic = it }); Text("Metallic Ultron Voice") }
                     OutlinedButton(onClick = { voice.applyVoiceSettings(selVoice, pitch, rate, langTag, metallic); voice.speak("There are no strings on me.") }) { Text("Test Voice") }
                     if (voices.isNotEmpty()) {
@@ -307,13 +374,64 @@ fun PocketAIScreen(vm: MainViewModel = viewModel(), sharedText: String? = null) 
         )
     }
 
-    Box(modifier = Modifier.fillMaxSize().background(Color(0xFF060608))) {
+    val accentColor = Color(themeCfg.accentHex)
+    val bgColor = when (themeCfg.bgMode) { 1 -> Color(0xFF000000); 2 -> Color(0xFF0B1020); else -> Color(0xFF060608) }
+    val dynBorder = Color.White.copy(alpha = themeCfg.borderAlpha)
+
+    pendingCall?.let { person ->
+        AlertDialog(
+            onDismissRequest = { vm.dismissCallPrompt() },
+            title = { Text("Call $person") },
+            text = { Text("Choose how you want to place the call:") },
+            confirmButton = { Button(onClick = { vm.confirmCallMethod(true) }) { Text("WhatsApp") } },
+            dismissButton = { OutlinedButton(onClick = { vm.confirmCallMethod(false) }) { Text("Phone") } }
+        )
+    }
+
+    if (showThemeDialog) {
+        var selAccent by remember { mutableStateOf(themeCfg.accentHex) }
+        var selBg by remember { mutableStateOf(themeCfg.bgMode) }
+        var glow by remember { mutableStateOf(themeCfg.glowIntensity) }
+        var bAlpha by remember { mutableStateOf(themeCfg.borderAlpha) }
+        AlertDialog(
+            onDismissRequest = { showThemeDialog = false },
+            title = { Text("Theme Colors") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Accent Color")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(0xFFA6FF3BL, 0xFF00E5FFL, 0xFFFF3B5CL, 0xFFA855F7L, 0xFFFFB300L).forEach { hex ->
+                            Box(modifier = Modifier.size(30.dp).clip(CircleShape).background(Color(hex))
+                                .border(if (selAccent == hex) 2.dp else 0.dp, Color.White, CircleShape)
+                                .clickable { selAccent = hex })
+                        }
+                    }
+                    Text("Background")
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf(0 to "Glass", 1 to "AMOLED", 2 to "Slate").forEach { (id, lbl) ->
+                            FilterChip(selected = selBg == id, onClick = { selBg = id }, label = { Text(lbl) })
+                        }
+                    }
+                    Text("Glow Intensity")
+                    Slider(value = glow, onValueChange = { glow = it }, valueRange = 0f..0.45f)
+                    Text("Border Brightness")
+                    Slider(value = bAlpha, onValueChange = { bAlpha = it }, valueRange = 0.05f..0.35f)
+                }
+            },
+            confirmButton = {
+                Button(onClick = { vm.saveThemeConfig(ThemeConfig(selAccent, selBg, glow, bAlpha)); showThemeDialog = false }) { Text("Apply") }
+            },
+            dismissButton = { TextButton(onClick = { showThemeDialog = false }) { Text("Cancel") } }
+        )
+    }
+
+    Box(modifier = Modifier.fillMaxSize().background(bgColor)) {
         Box(modifier = Modifier.size(260.dp).offset(x = (-60).dp, y = 40.dp).background(Brush.radialGradient(listOf(Color(0x28FFFFFF), Color.Transparent)), CircleShape))
-        Box(modifier = Modifier.size(220.dp).align(Alignment.BottomEnd).offset(x = 50.dp, y = (-80).dp).background(Brush.radialGradient(listOf(Color(0x1FA6FF3B), Color.Transparent)), CircleShape))
+        Box(modifier = Modifier.size(220.dp).align(Alignment.BottomEnd).offset(x = 50.dp, y = (-80).dp).background(Brush.radialGradient(listOf(accentColor.copy(alpha = themeCfg.glowIntensity), Color.Transparent)), CircleShape))
 
         Column(modifier = Modifier.fillMaxSize().systemBarsPadding().padding(12.dp)) {
             val header = buildString {
-                append("$status • Mem:$memoryCount • ${if (fastAuto) "Fast" else "LLM"}")
+                append("$status • Mem:$memoryCount • ${if (fastAuto) "Fast" else "LLM"} • $ramTemp")
                 if (cloudCfg.apiKey.isNotBlank()) append(" • ${cloudCfg.provider.label}")
                 if (voiceCfg.wakeMode) append(" • Wake")
                 if (isListening) append(" • Listening...")
@@ -323,7 +441,7 @@ fun PocketAIScreen(vm: MainViewModel = viewModel(), sharedText: String? = null) 
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 val dotColor = when {
                     isListening -> Color(0xFFFFB300)
-                    status.startsWith("Ready") -> Color(0xFFA6FF3B)
+                    status.startsWith("Ready") -> accentColor
                     else -> Color(0xFFFF5252)
                 }
                 Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(dotColor))
@@ -332,13 +450,14 @@ fun PocketAIScreen(vm: MainViewModel = viewModel(), sharedText: String? = null) 
             Spacer(Modifier.height(8.dp))
 
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                FilledTonalIconButton(colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = GlassFill, contentColor = Color.White), modifier = Modifier.border(1.dp, GlassBorder, CircleShape), onClick = { showModelsDialog = true }) { Icon(Icons.Rounded.Memory, contentDescription = "Models") }
-                FilledTonalIconButton(colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = GlassFill, contentColor = Color.White), modifier = Modifier.border(1.dp, GlassBorder, CircleShape), onClick = { showCloudDialog = true }) { Icon(Icons.Rounded.Cloud, contentDescription = "API") }
-                FilledTonalIconButton(colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = GlassFill, contentColor = Color.White), modifier = Modifier.border(1.dp, GlassBorder, CircleShape), onClick = { showVoiceDialog = true }) { Icon(Icons.Rounded.RecordVoiceOver, contentDescription = "Voice") }
-                FilledTonalIconButton(colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = GlassFill, contentColor = Color.White), modifier = Modifier.border(1.dp, GlassBorder, CircleShape), onClick = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }) { Icon(Icons.Rounded.AccessibilityNew, contentDescription = "Access") }
+                FilledTonalIconButton(colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = GlassFill, contentColor = Color.White), modifier = Modifier.border(1.dp, dynBorder, CircleShape), onClick = { showModelsDialog = true }) { Icon(Icons.Rounded.Memory, contentDescription = "Models") }
+                FilledTonalIconButton(colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = GlassFill, contentColor = Color.White), modifier = Modifier.border(1.dp, dynBorder, CircleShape), onClick = { showCloudDialog = true }) { Icon(Icons.Rounded.Cloud, contentDescription = "API") }
+                FilledTonalIconButton(colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = GlassFill, contentColor = Color.White), modifier = Modifier.border(1.dp, dynBorder, CircleShape), onClick = { showVoiceDialog = true }) { Icon(Icons.Rounded.RecordVoiceOver, contentDescription = "Voice") }
+                FilledTonalIconButton(colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = GlassFill, contentColor = Color.White), modifier = Modifier.border(1.dp, dynBorder, CircleShape), onClick = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }) { Icon(Icons.Rounded.AccessibilityNew, contentDescription = "Access") }
                 FilterChip(selected = fastAuto, onClick = { vm.toggleFastAuto() }, leadingIcon = { Icon(Icons.Rounded.Bolt, contentDescription = null, modifier = Modifier.size(16.dp)) }, label = { Text("Fast") })
                 FilterChip(selected = liveWeb, onClick = { vm.toggleLiveWeb() }, leadingIcon = { Icon(Icons.Rounded.Public, contentDescription = null, modifier = Modifier.size(16.dp)) }, label = { Text("Web") })
                 FilterChip(selected = voiceEnabled, onClick = { voiceEnabled = !voiceEnabled; if (!voiceEnabled) voice.stopSpeaking() }, leadingIcon = { Icon(if (voiceEnabled) Icons.Rounded.VolumeUp else Icons.Rounded.VolumeOff, contentDescription = null, modifier = Modifier.size(16.dp)) }, label = { Text(if (voiceEnabled) "TTS" else "Mute") })
+                FilledTonalIconButton(colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = GlassFill, contentColor = accentColor), modifier = Modifier.border(1.dp, dynBorder, CircleShape), onClick = { showThemeDialog = true }) { Icon(Icons.Rounded.Palette, contentDescription = "Theme") }
                 IconButton(onClick = { vm.clearChat() }) { Icon(Icons.Rounded.DeleteOutline, contentDescription = "Clear", tint = Color(0xFFB5B5C2)) }
                 if (activeTask?.status == TaskStatus.RUNNING) {
                     FilledTonalIconButton(onClick = { vm.pauseTask() }) { Icon(Icons.Rounded.Pause, contentDescription = "Pause") }
@@ -355,20 +474,20 @@ fun PocketAIScreen(vm: MainViewModel = viewModel(), sharedText: String? = null) 
                 items(messages) { msg ->
                     when (msg.role) {
                         "You" -> Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                            Surface(color = Color(0x24A6FF3B), shape = RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp), border = BorderStroke(1.dp, Brush.linearGradient(listOf(Color(0x66A6FF3B), Color(0x18FFFFFF)))), modifier = Modifier.widthIn(max = 300.dp)) {
+                            Surface(color = accentColor.copy(alpha = 0.16f), shape = RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp), border = BorderStroke(1.dp, Brush.linearGradient(listOf(accentColor.copy(alpha = 0.45f), Color(0x18FFFFFF)))), modifier = Modifier.widthIn(max = 300.dp)) {
                                 Text(msg.text, modifier = Modifier.padding(12.dp), color = Color(0xFFF4FFE8))
                             }
                         }
                         "Tool" -> Surface(color = Color(0x12FFFFFF), shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, Color(0x1EFFFFFF)), modifier = Modifier.fillMaxWidth()) {
                             Row(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Icon(Icons.Rounded.Terminal, contentDescription = null, modifier = Modifier.size(14.dp), tint = Color(0xFFA6FF3B))
+                                Icon(Icons.Rounded.Terminal, contentDescription = null, modifier = Modifier.size(14.dp), tint = accentColor)
                                 Text(msg.text, style = MaterialTheme.typography.bodySmall, color = Color(0xFFB5B5C2))
                             }
                         }
                         else -> Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
-                            Surface(color = GlassFill, shape = RoundedCornerShape(18.dp, 18.dp, 18.dp, 4.dp), border = BorderStroke(1.dp, GlassBorder), modifier = Modifier.widthIn(max = 320.dp)) {
+                            Surface(color = GlassFill, shape = RoundedCornerShape(18.dp, 18.dp, 18.dp, 4.dp), border = BorderStroke(1.dp, dynBorder), modifier = Modifier.widthIn(max = 320.dp)) {
                                 Column(modifier = Modifier.padding(12.dp)) {
-                                    Text(msg.role, style = MaterialTheme.typography.labelSmall, color = Color(0xFFA6FF3B))
+                                    Text(msg.role, style = MaterialTheme.typography.labelSmall, color = accentColor)
                                     Spacer(Modifier.height(2.dp))
                                     Text(msg.text, color = Color(0xFFF0F0F5))
                                 }
@@ -380,7 +499,7 @@ fun PocketAIScreen(vm: MainViewModel = viewModel(), sharedText: String? = null) 
 
             Row(modifier = Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(value = input, onValueChange = { input = it }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(24.dp), placeholder = { Text("Command, question, or Mic") })
-                FilledTonalIconButton(colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = GlassFill, contentColor = Color.White), modifier = Modifier.border(1.dp, GlassBorder, CircleShape), enabled = !isGenerating && !isNavigating, onClick = {
+                FilledTonalIconButton(colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = GlassFill, contentColor = Color.White), modifier = Modifier.border(1.dp, dynBorder, CircleShape), enabled = !isGenerating && !isNavigating, onClick = {
                     if (isListening) voice.stopListening()
                     else {
                         val hasMic = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
@@ -388,6 +507,11 @@ fun PocketAIScreen(vm: MainViewModel = viewModel(), sharedText: String? = null) 
                     }
                 }) { Icon(if (isListening) Icons.Rounded.GraphicEq else Icons.Rounded.Mic, contentDescription = "Mic") }
                 FilledIconButton(enabled = !isGenerating && !isNavigating, onClick = { vm.sendMessage(input); input = "" }) { Icon(Icons.Rounded.Send, contentDescription = "Send") }
+            }
+            Spacer(Modifier.height(4.dp))
+            NavigationBar(containerColor = Color(0xCC0D0D12)) {
+                NavigationBarItem(selected = true, onClick = { activeTab = 0 }, icon = { Icon(Icons.Rounded.SmartToy, null) }, label = { Text("Assistant") })
+                NavigationBarItem(selected = false, onClick = { activeTab = 1 }, icon = { Icon(Icons.Rounded.Info, null) }, label = { Text("Updates") })
             }
         }
     }

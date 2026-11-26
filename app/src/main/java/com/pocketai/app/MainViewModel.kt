@@ -7,7 +7,9 @@ import android.content.IntentFilter
 import android.hardware.camera2.CameraManager
 import android.net.Uri
 import android.os.BatteryManager
+import android.app.ActivityManager
 import android.provider.AlarmClock
+import android.provider.ContactsContract
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
@@ -30,6 +32,12 @@ data class CloudConfig(
     val model: String = CloudProvider.GEMINI.defaultModel,
     val autoHelp: Boolean = true
 )
+data class ThemeConfig(
+    val accentHex: Long = 0xFFA6FF3BL,
+    val bgMode: Int = 0,
+    val glowIntensity: Float = 0.25f,
+    val borderAlpha: Float = 0.14f
+)
 data class ModelConfig(
     val contextLength: Int = 1024,
     val historyTurns: Int = 6,
@@ -37,15 +45,18 @@ data class ModelConfig(
     val topP: Float = 0.9f,
     val topK: Int = 40,
     val threads: Int = 4,
+    val maxTokens: Int = 256,
+    val preset: String = "Balanced",
+    val autoUnloadOnBg: Boolean = false,
     val systemPrompt: String = "",
-    val chatTemplate: String = "<|im_start|>system\n{SYSTEM}<|im_end|>\n{HISTORY}<|im_start|>user\n{USER}<|im_end|>\n<|im_start|>assistant\n"
+    val chatTemplate: String = "AUTO"
 )
 data class VoiceConfig(
     val voiceName: String = "",
-    val pitch: Float = 0.68f,
-    val rate: Float = 0.90f,
+    val pitch: Float = 0.76f,
+    val rate: Float = 0.94f,
     val wakeMode: Boolean = false,
-    val langTag: String = "en-IN",
+    val langTag: String = "mix",
     val metallic: Boolean = true
 )
 
@@ -79,6 +90,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val modelConfig = _modelConfig.asStateFlow()
 
     private val _voiceConfig = MutableStateFlow(loadVoiceConfig())
+    private val _themeConfig = MutableStateFlow(loadThemeConfig())
+    val themeConfig = _themeConfig.asStateFlow()
+    private val _pendingCallContact = MutableStateFlow<String?>(null)
+    val pendingCallContact = _pendingCallContact.asStateFlow()
+    private val _ramTemp = MutableStateFlow("Checking...")
+    val ramTemp = _ramTemp.asStateFlow()
+    private var lastModelName = "" 
     val voiceConfig = _voiceConfig.asStateFlow()
 
     private val _recentModels = MutableStateFlow(loadRecentModels())
@@ -174,6 +192,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun toggleLiveWeb() { _liveWeb.value = !_liveWeb.value }
     fun toggleFastAuto() { _fastAuto.value = !_fastAuto.value }
 
+    private fun loadThemeConfig() = ThemeConfig(
+        accentHex = prefs.getLong("themeAccent", 0xFFA6FF3BL),
+        bgMode = prefs.getInt("themeBgMode", 0),
+        glowIntensity = prefs.getFloat("themeGlow", 0.25f),
+        borderAlpha = prefs.getFloat("themeBorder", 0.14f)
+    )
+
+    fun saveThemeConfig(cfg: ThemeConfig) {
+        prefs.edit().putLong("themeAccent", cfg.accentHex).putInt("themeBgMode", cfg.bgMode)
+            .putFloat("themeGlow", cfg.glowIntensity).putFloat("themeBorder", cfg.borderAlpha).apply()
+        _themeConfig.value = cfg
+    }
+
+    fun refreshRamTemp() {
+        runCatching {
+            val am = getApplication<Application>().getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            val mi = ActivityManager.MemoryInfo(); am.getMemoryInfo(mi)
+            val freeGb = mi.availMem / (1024.0 * 1024.0 * 1024.0)
+            val bm = getApplication<Application>().registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            val temp = (bm?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0) / 10f
+            _ramTemp.value = String.format("%.1fGB free • %.1f°C", freeGb, temp)
+        }
+    }
+
     private fun loadModelConfig() = ModelConfig(
         contextLength = prefs.getInt("ctxLen", 1024),
         historyTurns = prefs.getInt("histTurns", 6),
@@ -181,24 +223,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         topP = prefs.getFloat("topP", 0.9f),
         topK = prefs.getInt("topK", 40),
         threads = prefs.getInt("threads", 4),
+        maxTokens = prefs.getInt("maxTok", 256),
+        preset = prefs.getString("preset", "Balanced") ?: "Balanced",
+        autoUnloadOnBg = prefs.getBoolean("autoUnload", false),
         systemPrompt = prefs.getString("sysPrompt", "") ?: "",
-        chatTemplate = prefs.getString("chatTpl", "<|im_start|>system\n{SYSTEM}<|im_end|>\n{HISTORY}<|im_start|>user\n{USER}<|im_end|>\n<|im_start|>assistant\n") ?: ""
+        chatTemplate = prefs.getString("chatTpl", "AUTO") ?: "AUTO"
     )
 
     fun saveModelConfig(cfg: ModelConfig) {
         prefs.edit().putInt("ctxLen", cfg.contextLength).putInt("histTurns", cfg.historyTurns)
             .putFloat("temp", cfg.temperature).putFloat("topP", cfg.topP).putInt("topK", cfg.topK)
-            .putInt("threads", cfg.threads).putString("sysPrompt", cfg.systemPrompt)
-            .putString("chatTpl", cfg.chatTemplate).apply()
+            .putInt("threads", cfg.threads).putInt("maxTok", cfg.maxTokens)
+            .putString("preset", cfg.preset).putBoolean("autoUnload", cfg.autoUnloadOnBg)
+            .putString("sysPrompt", cfg.systemPrompt).putString("chatTpl", cfg.chatTemplate).apply()
         _modelConfig.value = cfg
     }
 
     private fun loadVoiceConfig() = VoiceConfig(
         voiceName = prefs.getString("voiceName", "") ?: "",
-        pitch = prefs.getFloat("voicePitch", 0.68f),
-        rate = prefs.getFloat("voiceRate", 0.90f),
+        pitch = prefs.getFloat("voicePitch", 0.76f),
+        rate = prefs.getFloat("voiceRate", 0.94f),
         wakeMode = prefs.getBoolean("wakeMode", false),
-        langTag = prefs.getString("langTag", "en-IN") ?: "en-IN",
+        langTag = prefs.getString("langTag", "mix") ?: "mix",
         metallic = prefs.getBoolean("metallic", true)
     )
 
@@ -237,6 +283,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
                 llamaHelper.load(path = uriString, contextLength = _modelConfig.value.contextLength.coerceIn(256, 4096)) {
+                    lastModelName = label
                     isLoaded = true
                     _status.value = "Ready ($label)"
                 }
@@ -266,11 +313,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) { messageDao.clearAll() }
     }
     private fun normalizeHinglish(raw: String): String {
-        return raw
-            .replace(Regex("""(?i)\b(kholo|khol|chalao)\b"""), "open")
-            .replace(Regex("""(?i)\b(bhejo|bhej|likho|likh)\b"""), "message")
-            .replace(Regex("""(?i)\b(dhundo|dhund)\b"""), "search")
-            .replace(Regex("""(?i)\b(aur|te)\b"""), "and")
+        var t = raw
+        val scriptMap = mapOf(
+            "व्हाट्सएप" to "whatsapp", "यूट्यूब" to "youtube", "गूगल" to "google",
+            "मम्मा" to "mamma", "पापा" to "papa", "भैया" to "bhaiya",
+            "खोलो" to "open", "खोल" to "open", "भेजो" to "message", "मैसेज" to "message",
+            "कॉल" to "call", "फ़ोन" to "phone", "पीडीएफ" to "pdf", "लिंक" to "link",
+            "आखिरी" to "last", "पिछला" to "last", "आज" to "today", "कल" to "yesterday",
+            "बताओ" to "tell", "सुनाओ" to "summarise", "वापस" to "back", "बंद" to "off",
+            "ਮੰਮਾ" to "mamma", "ਪਾਪਾ" to "papa", "ਭਈਆ" to "bhaiya",
+            "ਖੋਲ੍ਹੋ" to "open", "ਭੇਜੋ" to "message", "ਮੈਸੇਜ" to "message",
+            "ਕਾਲ" to "call", "ਲਿੰਕ" to "link", "ਪੀਡੀਐਫ" to "pdf",
+            "ਆਖਰੀ" to "last", "ਪਿਛਲਾ" to "last", "ਅੱਜ" to "today", "ਕੱਲ੍ਹ" to "yesterday",
+            "ਦੱਸ" to "tell", "ਸੁਣਾਓ" to "summarise", "ਵਾਪਸ" to "back", "ਬੰਦ" to "off"
+        )
+        scriptMap.forEach { (k, v) -> t = t.replace(k, " $v ") }
+        return t
+            .replace(Regex("""(?i)\b(kholo|khol|chalao|kholna|khol\s+de)\b"""), "open")
+            .replace(Regex("""(?i)\b(bhejo|bhej|likho|likh|ghallo|kar\s+de|bhej\s+de)\b"""), "message")
+            .replace(Regex("""(?i)\b(dhundo|dhund|labho|labh)\b"""), "search")
+            .replace(Regex("""(?i)\b(vekho|dikhao|daso|dass|batao|samjhao|sunao)\b"""), "summarise")
+            .replace(Regex("""(?i)\b(akhri|aakhri|pichli|pichla|last)\b"""), "last")
+            .replace(Regex("""(?i)\b(aaj|ajj)\b"""), "today")
+            .replace(Regex("""(?i)\b(kal|kall)\b"""), "yesterday")
+            .replace(Regex("""(?i)\b(wapas|pichhe)\b"""), "back")
+            .replace(Regex("""(?i)\b(band)\b"""), "off")
+            .replace(Regex("""(?i)\b(chalu)\b"""), "on")
+            .replace(Regex("""(?i)\b(phone\s+laa|call\s+kar|call\s+laa|mila)\b"""), "call")
+            .replace(Regex("""(?i)\b(aur|ate)\b"""), "and")
+            .replace(Regex("""(?i)\b(vich|mein)\b"""), "in")
+            .replace(Regex("""\s+"""), " ").trim()
     }
 
     private fun checkThermalBatterySafe(): String? {
@@ -319,7 +391,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val q = lowerAll.replaceFirst(Regex("""(?i)^(?:google|look up|search web for)\s+"""), "").trim()
             return listOf(PlannedStep(TaskAction.WEB_SEARCH_NARRATE, target = q))
         }
-        val isWa = Regex("""(?i)\b(?:whatsapp|wa)\b""").containsMatchIn(input)
+        if (Regex("""(?i)^(?:call|ring|dial)\s+""").containsMatchIn(lowerAll) || Regex("""(?i)\bcall\s+[a-z0-9._-]+""").containsMatchIn(lowerAll)) {
+            val mode = when {
+                lowerAll.contains("whatsapp") || lowerAll.contains(" wa ") -> "whatsapp"
+                lowerAll.contains("phone") || lowerAll.contains("sim") -> "phone"
+                else -> ""
+            }
+            val person = input.replace(Regex("""(?i)^(?:please\s+)?(?:call|ring|dial)\s+"""), "")
+                .replace(Regex("""(?i)\b(?:on|via)\s+(?:whatsapp|wa|phone|sim).*$"""), "").trim()
+            if (person.isNotBlank()) return listOf(PlannedStep(TaskAction.CALL_CONTACT, target = person, extra = mode))
+        }
+        val wantsSummarize = Regex("""(?i)\b(?:summari[sz]e|summary|read|what\s+did)\b""").containsMatchIn(lowerAll) &&
+            Regex("""(?i)\b(?:message|messages|msg|sent|send)\b""").containsMatchIn(lowerAll)
+        if (wantsSummarize) {
+            val dateF = when { lowerAll.contains("yesterday") -> "yesterday"; lowerAll.contains("today") -> "today"; else -> "" }
+            val rawP = Regex("""(?i)\b(?:message|messages|msg)\s+([a-zA-Z0-9._-]+?)\s+(?:sent|send)\b""").find(input)?.groupValues?.get(1)
+                ?: Regex("""(?i)\b(?:what\s+did|from)\s+([a-zA-Z0-9._-]+?)(?:\s+(?:sent|send)|$)""").find(input)?.groupValues?.get(1)
+                ?: Regex("""(?i)\b([a-zA-Z0-9._-]+?)'s\s+(?:last|latest)?\s*(?:message|messages|msg)\b""").find(input)?.groupValues?.get(1)
+            var person = rawP?.trim().orEmpty()
+            if (person.lowercase() in setOf("he", "she", "him", "her", "they") && lastContactName.isNotBlank()) person = lastContactName
+            if (person.isNotBlank()) return listOf(
+                PlannedStep(TaskAction.OPEN_APP, target = "WhatsApp"),
+                PlannedStep(TaskAction.SUMMARIZE_MESSAGES, target = person, extra = dateF)
+            )
+        }
+        val isWa = Regex("""(?i)\b(?:whatsapp|wa|sent|sent\s+me)\b""").containsMatchIn(input)
         val wantsPdf = Regex("""(?i)\b(?:pdf|document)\b""").containsMatchIn(input)
         val wantsLink = Regex("""(?i)\blink\b""").containsMatchIn(input)
         if (isWa && (wantsPdf || wantsLink)) {
@@ -336,7 +432,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 return listOf(
                     PlannedStep(TaskAction.OPEN_APP, target = "WhatsApp"),
                     PlannedStep(TaskAction.TAP_TARGET, target = person),
-                    PlannedStep(finalAction)
+                    PlannedStep(finalAction, extra = when { lowerAll.contains("yesterday") -> "yesterday"; lowerAll.contains("today") -> "today"; else -> "" })
                 )
             }
         }
@@ -391,19 +487,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val trimmed = userText.trim()
         if (trimmed.equals("help", ignoreCase = true) || trimmed.equals("/help", ignoreCase = true)) {
             appendMessage("You", trimmed)
+            refreshRamTemp()
+            val accOk = PocketAccessibilityService.instance != null
+            val modOk = isLoaded
+            val cloudOk = _cloudConfig.value.apiKey.isNotBlank()
+            val webOk = _liveWeb.value
+            val st = { ok: Boolean -> if (ok) "Ready" else "Missing" }
             appendMessage("Assistant", """
-                |PocketAI Commands & Features:
-                |• Apps & UI: "open yt and search lofi beats and tap the first video"
-                |• WhatsApp: "message rahul it is hot here today" / "open wa and find Rahul's latest PDF"
-                |• Shorts: "open yt and doomscroll" (skips ads & reads progress bar)
-                |• Device Files: "open thermodynamics pdf from Google files"
-                |• Web & Facts: "what is seahorse" / "who is jackie shroff" / toggle Web chip
-                |• Screen Q&A: "explain bernoulli theorem in this question" / "solve Q12 from screen"
-                |• Email: "write an email to x@y.com about leave"
-                |• Device Controls: "turn on flashlight", "set alarm for 7 am", "set timer for 5 minutes"
-                |• App Home: "go home in whatsapp"
-                |• Memory & Cloud: "/remember <fact>", "/cloud <question>"
-                |• Voice & Wake: Tap Voice icon for Pitch, Speed, Metallic DSP, EN/HI/PA & "Ultron" wake word
+                |[System Status]
+                |• Local GGUF Model: ${st(modOk)} | Cloud AI: ${st(cloudOk)}
+                |• Accessibility: ${st(accOk)} | Live Web: ${if (webOk) "ON" else "OFF"}
+                |• Device: ${_ramTemp.value}
+                |
+                |[Commands]
+                |• /help, /remember <fact>, /cloud <question>
+                |• "call mamma" (asks WhatsApp or Phone)
+                |• "think and message bhaiya on <topic>"
+                |• "summarise the latest message mamma sent"
+                |
+                |[Accessibility Features] (Needs: Accessibility ON)
+                |• WhatsApp: "message <name> <text>", "open wa and tap link he sent yesterday", "open latest pdf mamma sent"
+                |• YouTube: "open yt and search ...", "open yt and doomscroll"
+                |• Gestures: "zoom in/out", "scroll up/down", "go home in whatsapp"
+                |
+                |[AI & Web Features] (Needs: GGUF Model OR Cloud AI; Web ON for live facts)
+                |• Document / Screen Q&A: "solve question 12 on screen" (Needs: Accessibility + Model/Cloud)
+                |• Live Web Facts: Toggle Web ON for real-time facts in any answer
+                |
+                |[Voice & Device Controls]
+                |• Voice: Tap Mic or enable "Ultron" wake word (Mix / EN / HI / PA)
+                |• Controls: "turn on flashlight", "set alarm for 7 am", "set timer for 5 min"
             """.trimMargin())
             return
         }
@@ -450,6 +563,49 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             appendMessage("Tool", res)
             updateTask { it.copy(status = TaskStatus.RUNNING, observations = it.observations + res) }
             delay(900L); cont?.invoke()
+        }
+    }
+
+    fun confirmCallMethod(useWhatsApp: Boolean) {
+        val person = _pendingCallContact.value ?: return
+        _pendingCallContact.value = null
+        val mode = if (useWhatsApp) "whatsapp" else "phone"
+        _activeTask.value = AgentTask(
+            originalInstruction = "Call $person ($mode)",
+            objective = "Call $person via $mode",
+            plan = listOf(PlannedStep(TaskAction.CALL_CONTACT, target = person, extra = mode)),
+            status = TaskStatus.RUNNING
+        )
+        _isNavigating.value = true
+        viewModelScope.launch(Dispatchers.IO) { executeCurrentTask() }
+    }
+
+    fun dismissCallPrompt() { _pendingCallContact.value = null }
+
+    private fun placePhoneCall(contactName: String): String {
+        val app = getApplication<Application>()
+        var number: String? = null
+        runCatching {
+            val cur = app.contentResolver.query(
+                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                arrayOf(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME, ContactsContract.CommonDataKinds.Phone.NUMBER),
+                "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?",
+                arrayOf("%$contactName%"), null
+            )
+            cur?.use { if (it.moveToFirst()) number = it.getString(1) }
+        }
+        if (number.isNullOrBlank()) {
+            val dial = Intent(Intent.ACTION_DIAL).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+            app.startActivity(dial)
+            return "Opened Dialer (grant Contacts permission or dial $contactName)"
+        }
+        val uri = Uri.parse("tel:" + Uri.encode(number))
+        return runCatching {
+            app.startActivity(Intent(Intent.ACTION_CALL, uri).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
+            "Calling $contactName ($number)"
+        }.getOrElse {
+            app.startActivity(Intent(Intent.ACTION_DIAL, uri).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
+            "Opened Dialer for $contactName ($number)"
         }
     }
 
@@ -661,7 +817,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 var links: List<UiElement> = emptyList()
                 for (attempt in 0 until 4) {
                     if (!_isNavigating.value) return false to "Cancelled"
-                    links = a.findLinksInChat(); if (links.isNotEmpty()) break
+                    links = a.findLinksInChat(step.extra); if (links.isNotEmpty()) break
                     a.scroll("up"); delay(800L)
                 }
                 if (links.isEmpty()) return false to "No link found in this chat"
@@ -730,6 +886,44 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 for (attempt in 0 until 3) { val s = svc!!.getCompressedScreen(); svc.findAndTapByText(step.target, true, lastSearchQuery)?.let { appendMessage("Tool", it); return true to it }; if (s == prev) break; prev = s; appendMessage("Tool", svc.scroll("down")); delay(650L) }
                 false to "Target '${step.target}' not visible"
             }
+            TaskAction.CALL_CONTACT -> {
+                if (step.extra.isBlank()) {
+                    _pendingCallContact.value = step.target
+                    return false to "Choose WhatsApp or Phone to call ${step.target}"
+                }
+                if (step.extra == "whatsapp") {
+                    val launch = getApplication<Application>().packageManager.getLaunchIntentForPackage("com.whatsapp")
+                        ?: return false to "WhatsApp not installed"
+                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getApplication<Application>().startActivity(launch)
+                    delay(1100L)
+                    val opened = searchAndTapFallback(svc!!, step.target)
+                    if (!opened) return false to "Could not find ${step.target} on WhatsApp"
+                    delay(800L)
+                    val res = svc.tapWhatsAppCallButton()
+                    appendMessage("Tool", res); true to res
+                } else {
+                    val res = placePhoneCall(step.target)
+                    appendMessage("Tool", res); true to res
+                }
+            }
+            TaskAction.SUMMARIZE_MESSAGES -> {
+                val opened = searchAndTapFallback(svc!!, step.target)
+                if (!opened) return false to "Could not find chat for '${step.target}'"
+                delay(900L)
+                val msgs = svc.readIncomingMessages(step.extra)
+                if (msgs.isEmpty()) return false to "No incoming messages found from ${step.target}"
+                val joined = msgs.takeLast(8).joinToString("\n- ", prefix = "- ")
+                val prompt = "Summarize these incoming WhatsApp messages from ${step.target} concisely in English:\n$joined"
+                if (_cloudConfig.value.apiKey.isNotBlank()) {
+                    askCloudForHelp(prompt)
+                } else if (isLoaded) {
+                    runNextStep(extraNote = prompt)
+                } else {
+                    val raw = "Messages from ${step.target}:\n$joined"
+                    appendMessage("Assistant", raw); voiceController?.speak(raw)
+                }
+                true to "Summarized ${msgs.size} message(s) from ${step.target}"
+            }
             TaskAction.ZOOM -> { val r = svc?.pinchZoom(step.target == "in") ?: "Access off"; appendMessage("Tool", r); true to r }
             TaskAction.SCROLL -> { val r = svc?.scroll(step.target) ?: "Access off"; appendMessage("Tool", r); true to r }
             TaskAction.BACK -> { val r = svc?.pressBack() ?: "Access off"; appendMessage("Tool", r); true to r }
@@ -783,8 +977,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun askCloudForHelp(query: String, screenContext: String? = null) {
         val cfg = _cloudConfig.value; _isGenerating.value = true
         viewModelScope.launch(Dispatchers.IO) {
+            val web = if (_liveWeb.value && screenContext.isNullOrBlank()) CloudHelper.fetchWebText(query) else ""
             val full = buildString {
-                append("You are Ultron (cold, eloquent, darkly witty Android AI). Understand Hindi/Punjabi/English, always reply in English.\n")
+                append("You are Ultron (cold, eloquent, darkly witty Android AI). Understand English, Hindi, Punjabi, and Hinglish/Punjabi-Hindi mixes, always reply in English.\n")
+                if (web.isNotBlank()) append("Live web facts:\n$web\nUse these facts accurately.\n")
                 if (!screenContext.isNullOrBlank()) append("Screen context:\n$screenContext\n")
                 append("User request: $query")
             }
@@ -869,10 +1065,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val screenBlock = if (rawScreen != null && !rawScreen.startsWith("Package: com.pocketai.app")) "\nCurrent screen:\n$rawScreen" else ""
         val factsBlock = if (cachedFacts.isNotEmpty()) "\nKnown user facts:\n" + cachedFacts.joinToString("\n") { "- $it" } else ""
         val baseSys = _modelConfig.value.systemPrompt.ifBlank { "You are Ultron, a cold, calculating, hyper-intelligent synthetic AI—eloquent, imperious, darkly witty. Understand English, Hindi, Punjabi, and Hinglish, and ALWAYS reply in English. Give balanced, 3 to 5 sentence replies when conversing." }
-        val sb = StringBuilder("<|im_start|>system\n$baseSys\nAvailable tools (emit exact tag only when needed):\n[TOOL: open_app|package=<pkg>]\n[TOOL: tap|id=<number>]\n[TOOL: type_text|id=<number>|text=<value>]\n[TOOL: scroll|direction=<up|down|left|right>]\n[TOOL: back]\n[TOOL: read_screen]\n[TOOL: save_memory|fact=<text>]$factsBlock$screenBlock\n<|im_end|>\n")
-        if (extraNote == null) { for (msg in historyTurns) sb.append("<|im_start|>${if (msg.role == "You") "user" else "assistant"}\n${msg.text}<|im_end|>\n") }
-        else sb.append("<|im_start|>user\nGoal: $activeGoal\n$extraNote<|im_end|>\n")
-        sb.append("<|im_start|>assistant\n")
+        val sysFull = "$baseSys\nAvailable tools (emit exact tag only when needed):\n[TOOL: open_app|package=<pkg>]\n[TOOL: tap|id=<number>]\n[TOOL: type_text|id=<number>|text=<value>]\n[TOOL: scroll|direction=<up|down|left|right>]\n[TOOL: back]\n[TOOL: read_screen]\n[TOOL: save_memory|fact=<text>]$factsBlock$screenBlock"
+        val tpl = when (_modelConfig.value.chatTemplate) {
+            "LLAMA3", "GEMMA", "CHATML" -> _modelConfig.value.chatTemplate
+            else -> when {
+                lastModelName.lowercase().contains("llama") -> "LLAMA3"
+                lastModelName.lowercase().contains("gemma") -> "GEMMA"
+                else -> "CHATML"
+            }
+        }
+        val sb = StringBuilder()
+        when (tpl) {
+            "LLAMA3" -> {
+                sb.append("<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n$sysFull<|eot_id|>")
+                if (extraNote == null) { for (msg in historyTurns) sb.append("<|start_header_id|>${if (msg.role == "You") "user" else "assistant"}<|end_header_id|>\n\n${msg.text}<|eot_id|>") }
+                else sb.append("<|start_header_id|>user<|end_header_id|>\n\nGoal: $activeGoal\n$extraNote<|eot_id|>")
+                sb.append("<|start_header_id|>assistant<|end_header_id|>\n\n")
+            }
+            "GEMMA" -> {
+                sb.append("<start_of_turn>user\nSystem: $sysFull\n")
+                if (extraNote == null) { for (msg in historyTurns) sb.append("${if (msg.role == "You") "<start_of_turn>user" else "<start_of_turn>model"}\n${msg.text}<end_of_turn>\n") }
+                else sb.append("Goal: $activeGoal\n$extraNote<end_of_turn>\n")
+                sb.append("<start_of_turn>model\n")
+            }
+            else -> {
+                sb.append("<|im_start|>system\n$sysFull<|im_end|>\n")
+                if (extraNote == null) { for (msg in historyTurns) sb.append("<|im_start|>${if (msg.role == "You") "user" else "assistant"}\n${msg.text}<|im_end|>\n") }
+                else sb.append("<|im_start|>user\nGoal: $activeGoal\n$extraNote<|im_end|>\n")
+                sb.append("<|im_start|>assistant\n")
+            }
+        }
         viewModelScope.launch(Dispatchers.IO) { runCatching { llamaHelper.predict(sb.toString()) }.onFailure { _isGenerating.value = false; _isNavigating.value = false } }
     }
 }

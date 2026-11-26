@@ -30,7 +30,7 @@ object PlanValidator {
                     }
                     normalized.add(step)
                 }
-                TaskAction.TAP_TARGET -> {
+                TaskAction.TAP_TARGET, TaskAction.CALL_CONTACT, TaskAction.SUMMARIZE_MESSAGES -> {
                     if (step.target.isBlank()) return ValidationResult(false, emptyList(), "TAP_TARGET missing label")
                     normalized.add(step)
                 }

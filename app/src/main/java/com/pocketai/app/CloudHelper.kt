@@ -16,7 +16,10 @@ object CloudHelper {
 
     fun fetchWebText(query: String): String {
         return try {
-            val url = URL("https://html.duckduckgo.com/html/?q=" + Uri.encode(query))
+            val cleanQ = query
+                .replace(Regex("""(?i)\b(?:please|tell me|can you|batao|dass|kya hai|ki hai|search|google|look up)\b"""), " ")
+                .replace(Regex("""\s+"""), " ").trim().ifBlank { query }
+            val url = URL("https://html.duckduckgo.com/html/?q=" + Uri.encode(cleanQ))
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
                 connectTimeout = 8000

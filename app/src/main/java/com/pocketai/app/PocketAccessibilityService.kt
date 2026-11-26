@@ -46,10 +46,14 @@ class PocketAccessibilityService : AccessibilityService() {
         if (pkg == "com.pocketai.app" || pkg == "com.android.systemui") return
         lastExternalPackage = pkg
         val now = System.currentTimeMillis()
-        if (now - lastCacheTime > 2500L) {
+        if (now - lastCacheTime > 3000L) {
             lastCacheTime = now
-            val txt = readFullScreenText(1800)
-            if (txt.length > 30) lastExternalScreenText = txt
+            kotlin.concurrent.thread(isDaemon = true) {
+                runCatching {
+                    val txt = readFullScreenText(1400, 45)
+                    if (txt.length > 30) lastExternalScreenText = txt
+                }
+            }
         }
     }
 
@@ -545,12 +549,63 @@ class PocketAccessibilityService : AccessibilityService() {
         return if (tab != null) tap(tab.id) else null
     }
 
-    fun findLinksInChat(): List<UiElement> {
-        val obs = observeScreen(50)
-        val urlRegex = Regex("""(?i)(?:https?://|www\.|youtube\.com/|youtu\.be/)""")
+    private fun findDateDividerBounds(elements: List<UiElement>, widthPx: Int, dateFilter: String): Pair<Int, Int>? {
+        if (dateFilter.isBlank()) return null
+        val target = dateFilter.lowercase().trim()
+        val dividers = elements.filter { el ->
+            val l = el.displayLabel.trim().lowercase()
+            !el.isEditable && el.bounds.left > widthPx * 0.22 && el.bounds.right < widthPx * 0.78 &&
+                (l == "today" || l == "yesterday" || Regex("""\d{1,2}\s+[a-z]{3,9}\s+\d{2,4}|\d{1,2}/\d{1,2}/\d{2,4}""").containsMatchIn(l))
+        }.sortedBy { it.bounds.top }
+        val idx = dividers.indexOfFirst { it.displayLabel.lowercase().contains(target) }
+        if (idx < 0) return null
+        val startY = dividers[idx].bounds.bottom
+        val endY = dividers.getOrNull(idx + 1)?.bounds?.top ?: Int.MAX_VALUE
+        return startY to endY
+    }
+
+    fun findLinksInChat(dateFilter: String = ""): List<UiElement> {
+        val obs = observeScreen(120)
+        val w = resources.displayMetrics.widthPixels
+        val range = findDateDividerBounds(obs.elements, w, dateFilter)
+        val urlRegex = Regex("""(?i)(?:https?://|www\.|youtube\.com/|youtu\.be/|wa\.me/)""")
         return obs.elements
-            .filter { el -> el.isClickable && !el.isEditable && urlRegex.containsMatchIn(el.displayLabel) }
+            .filter { el ->
+                !el.isEditable && urlRegex.containsMatchIn(el.displayLabel) &&
+                    (range == null || (el.bounds.top >= range.first && el.bounds.bottom <= range.second))
+            }
             .sortedByDescending { it.bounds.bottom }
+    }
+
+    fun readIncomingMessages(dateFilter: String = ""): List<String> {
+        val obs = observeScreen(120)
+        val dm = resources.displayMetrics
+        val range = findDateDividerBounds(obs.elements, dm.widthPixels, dateFilter)
+        val timeRe = Regex("""^\d{1,2}:\d{2}(\s?[aApP][mM])?$""")
+        return obs.elements
+            .filter { el ->
+                val txt = el.displayLabel.trim()
+                !el.isEditable && txt.length >= 2 &&
+                    el.bounds.top > 220 && el.bounds.bottom < dm.heightPixels - 180 &&
+                    el.bounds.left < dm.widthPixels * 0.28 && el.bounds.right < dm.widthPixels * 0.88 &&
+                    !timeRe.matches(txt) && !txt.equals("Unread messages", true) &&
+                    !txt.equals("TODAY", true) && !txt.equals("YESTERDAY", true) &&
+                    (range == null || (el.bounds.top >= range.first && el.bounds.bottom <= range.second))
+            }
+            .sortedBy { it.bounds.top }
+            .map { it.displayLabel.trim() }
+            .distinct()
+    }
+
+    fun tapWhatsAppCallButton(): String {
+        val obs = observeScreen(60)
+        val w = resources.displayMetrics.widthPixels
+        val btn = obs.elements.firstOrNull { el ->
+            val l = el.displayLabel.lowercase()
+            el.bounds.top < 350 && el.bounds.left > w * 0.50 &&
+                (l.contains("voice call") || l == "call")
+        } ?: return "WhatsApp call button not found"
+        return tap(btn.id)
     }
 
     fun findEditableId(): Int? {
