@@ -161,15 +161,15 @@ class PocketAccessibilityService : AccessibilityService() {
     }
 
     fun isOnAppHome(pkg: String? = null): Boolean {
-        val obs = observeScreen(45)
+        val obs = observeScreen(120)
         val p = pkg ?: obs.packageName
         val labels = obs.elements.map { it.displayLabel.lowercase() }
         val hasBackArrow = labels.any { it == "navigate up" || it == "back" }
         return when {
             p.contains("whatsapp") -> {
                 val hasBottomInput = obs.elements.any { it.isEditable && it.bounds.bottom > 1000 }
-                val hasTabs = labels.any { it.contains("chats") } && labels.any { it.contains("updates") || it.contains("calls") }
-                hasTabs && !hasBottomInput && !hasBackArrow
+                val hasTopSearch = obs.elements.any { it.isEditable && it.bounds.top < 450 }
+                !hasBottomInput && !hasTopSearch && !hasBackArrow
             }
             p.contains("youtube") -> {
                 val hasTabs = labels.any { it == "home" } && labels.any { it == "shorts" }
@@ -201,9 +201,9 @@ class PocketAccessibilityService : AccessibilityService() {
         for (i in 1..4) {
             pressBack()
             Thread.sleep(550L)
-            val now = observeScreen(45)
-            if (isOnAppHome(now.packageName)) return "Returned to home screen after $i back(s)"
+            val now = observeScreen(120)
             if (now.packageName != p) break
+            if (isOnAppHome(now.packageName)) return "Returned to home screen after $i back(s)"
         }
 
         // 3. Relaunch if backed out completely
@@ -332,9 +332,28 @@ class PocketAccessibilityService : AccessibilityService() {
         }.sortedByDescending { it.second }.map { it.first }.distinctBy { norm(it.displayLabel) }.take(4)
     }
 
+    private fun clickNodeOrGesture(node: AccessibilityNodeInfo): Boolean {
+        if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+        var cur = node.parent
+        repeat(4) {
+            if (cur != null) {
+                if (cur!!.isClickable && cur!!.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+                cur = cur!!.parent
+            }
+        }
+        val r = android.graphics.Rect()
+        node.getBoundsInScreen(r)
+        if (r.isEmpty) return false
+        val path = Path().apply { moveTo(r.centerX().toFloat(), r.centerY().toFloat()) }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0L, 50L))
+            .build()
+        return dispatchGesture(gesture, null, null)
+    }
+
     fun tap(id: Int): String {
         val entry = nodeMap[id] ?: return "Error: element [$id] not found"
-        val ok = entry.second.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        val ok = clickNodeOrGesture(entry.second)
         return if (ok) "Tapped [$id] \"${entry.first}\"" else "Failed to tap [$id]"
     }
 
@@ -358,7 +377,7 @@ class PocketAccessibilityService : AccessibilityService() {
                 ?.first
         } else null
         val match = chosen ?: return null
-        val ok = match.value.second.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        val ok = clickNodeOrGesture(match.value.second)
         return if (ok) "Tapped [${match.key}] \"${match.value.first.take(40)}\"" else "Failed to tap \"${match.value.first.take(40)}\""
     }
 
@@ -585,7 +604,18 @@ class PocketAccessibilityService : AccessibilityService() {
         val args = Bundle().apply {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
         }
-        val typed = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+        var targetNode = node
+        var typed = targetNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+        if (!typed) {
+            clickNodeOrGesture(node)
+            Thread.sleep(350L)
+            val root = rootInActiveWindow
+            val focused = root?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            if (focused != null && focused.isEditable) {
+                targetNode = focused
+                typed = targetNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+            }
+        }
         if (!typed) return "Failed to type into [$id]"
 
         if (submit && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
