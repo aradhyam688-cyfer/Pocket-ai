@@ -104,7 +104,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var currentAssistantMsgId: Long? = null
     private var cachedFacts: List<String> = emptyList()
     private val maxSteps = 6
-    private val openAppRegex = Regex("""\[TOOL:\s*open_app\Vert{}[^\]]+\]""")
+    private val openAppRegex = Regex("""\[TOOL:\s*open_app|[^\]]+\]""")
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
