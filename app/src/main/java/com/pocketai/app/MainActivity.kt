@@ -95,6 +95,7 @@ fun PocketAIScreen(vm: MainViewModel = viewModel(), sharedText: String? = null) 
     val liveWeb by vm.liveWeb.collectAsState()
     val cloudCfg by vm.cloudConfig.collectAsState()
     val voiceCfg by vm.voiceConfig.collectAsState()
+    val modelCfg by vm.modelConfig.collectAsState()
     val recentModels by vm.recentModels.collectAsState()
     val autoLoadLast by vm.autoLoadLast.collectAsState()
     val isGenerating by vm.isGenerating.collectAsState()
@@ -110,6 +111,7 @@ fun PocketAIScreen(vm: MainViewModel = viewModel(), sharedText: String? = null) 
     var showCloudDialog by remember { mutableStateOf(false) }
     var showModelsDialog by remember { mutableStateOf(false) }
     var showVoiceDialog by remember { mutableStateOf(false) }
+    var showParamsDialog by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
     LaunchedEffect(messages.size, messages.lastOrNull()?.text?.length) {
@@ -147,6 +149,42 @@ fun PocketAIScreen(vm: MainViewModel = viewModel(), sharedText: String? = null) 
             vm.loadModel(it.toString())
         }
     }
+    if (showParamsDialog) {
+        var ctx by remember { mutableStateOf(modelCfg.contextLength.toString()) }
+        var turns by remember { mutableStateOf(modelCfg.historyTurns.toString()) }
+        var temp by remember { mutableStateOf(modelCfg.temperature.toString()) }
+        var topP by remember { mutableStateOf(modelCfg.topP.toString()) }
+        var sysP by remember { mutableStateOf(modelCfg.systemPrompt) }
+        AlertDialog(
+            onDismissRequest = { showParamsDialog = false },
+            title = { Text("Model Parameters") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    OutlinedTextField(value = ctx, onValueChange = { ctx = it }, label = { Text("Context Size (n_ctx)") }, singleLine = true)
+                    OutlinedTextField(value = turns, onValueChange = { turns = it }, label = { Text("History Turns") }, singleLine = true)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        OutlinedTextField(value = temp, onValueChange = { temp = it }, label = { Text("Temp") }, modifier = Modifier.weight(1f), singleLine = true)
+                        OutlinedTextField(value = topP, onValueChange = { topP = it }, label = { Text("Top-p") }, modifier = Modifier.weight(1f), singleLine = true)
+                    }
+                    OutlinedTextField(value = sysP, onValueChange = { sysP = it }, label = { Text("Custom System Prompt (optional)") }, maxLines = 3)
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    vm.saveModelConfig(modelCfg.copy(
+                        contextLength = ctx.toIntOrNull() ?: 1024,
+                        historyTurns = turns.toIntOrNull() ?: 6,
+                        temperature = temp.toFloatOrNull() ?: 0.7f,
+                        topP = topP.toFloatOrNull() ?: 0.9f,
+                        systemPrompt = sysP
+                    ))
+                    showParamsDialog = false
+                }) { Text("Save") }
+            },
+            dismissButton = { TextButton(onClick = { showParamsDialog = false }) { Text("Cancel") } }
+        )
+    }
+
     if (showModelsDialog) {
         AlertDialog(
             onDismissRequest = { showModelsDialog = false },
@@ -162,6 +200,7 @@ fun PocketAIScreen(vm: MainViewModel = viewModel(), sharedText: String? = null) 
                         OutlinedButton(onClick = { vm.loadModel(m.uri, m.name); showModelsDialog = false }, modifier = Modifier.fillMaxWidth()) { Text(m.name) }
                     }
                     Button(onClick = { showModelsDialog = false; picker.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth()) { Text("Browse New .gguf") }
+                    OutlinedButton(onClick = { showModelsDialog = false; showParamsDialog = true }, modifier = Modifier.fillMaxWidth()) { Text("Model Parameters (n_ctx, Prompt)") }
                 }
             },
             confirmButton = {},

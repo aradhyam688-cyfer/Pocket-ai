@@ -30,6 +30,16 @@ data class CloudConfig(
     val model: String = CloudProvider.GEMINI.defaultModel,
     val autoHelp: Boolean = true
 )
+data class ModelConfig(
+    val contextLength: Int = 1024,
+    val historyTurns: Int = 6,
+    val temperature: Float = 0.7f,
+    val topP: Float = 0.9f,
+    val topK: Int = 40,
+    val threads: Int = 4,
+    val systemPrompt: String = "",
+    val chatTemplate: String = "<|im_start|>system\n{SYSTEM}<|im_end|>\n{HISTORY}<|im_start|>user\n{USER}<|im_end|>\n<|im_start|>assistant\n"
+)
 data class VoiceConfig(
     val voiceName: String = "",
     val pitch: Float = 0.68f,
@@ -64,6 +74,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _cloudConfig = MutableStateFlow(loadCloudConfig())
     val cloudConfig = _cloudConfig.asStateFlow()
+
+    private val _modelConfig = MutableStateFlow(loadModelConfig())
+    val modelConfig = _modelConfig.asStateFlow()
 
     private val _voiceConfig = MutableStateFlow(loadVoiceConfig())
     val voiceConfig = _voiceConfig.asStateFlow()
@@ -159,6 +172,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun toggleLiveWeb() { _liveWeb.value = !_liveWeb.value }
     fun toggleFastAuto() { _fastAuto.value = !_fastAuto.value }
 
+    private fun loadModelConfig() = ModelConfig(
+        contextLength = prefs.getInt("ctxLen", 1024),
+        historyTurns = prefs.getInt("histTurns", 6),
+        temperature = prefs.getFloat("temp", 0.7f),
+        topP = prefs.getFloat("topP", 0.9f),
+        topK = prefs.getInt("topK", 40),
+        threads = prefs.getInt("threads", 4),
+        systemPrompt = prefs.getString("sysPrompt", "") ?: "",
+        chatTemplate = prefs.getString("chatTpl", "<|im_start|>system\n{SYSTEM}<|im_end|>\n{HISTORY}<|im_start|>user\n{USER}<|im_end|>\n<|im_start|>assistant\n") ?: ""
+    )
+
+    fun saveModelConfig(cfg: ModelConfig) {
+        prefs.edit().putInt("ctxLen", cfg.contextLength).putInt("histTurns", cfg.historyTurns)
+            .putFloat("temp", cfg.temperature).putFloat("topP", cfg.topP).putInt("topK", cfg.topK)
+            .putInt("threads", cfg.threads).putString("sysPrompt", cfg.systemPrompt)
+            .putString("chatTpl", cfg.chatTemplate).apply()
+        _modelConfig.value = cfg
+    }
+
     private fun loadVoiceConfig() = VoiceConfig(
         voiceName = prefs.getString("voiceName", "") ?: "",
         pitch = prefs.getFloat("voicePitch", 0.68f),
@@ -202,7 +234,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         saveRecentModel(label, uriString)
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
-                llamaHelper.load(path = uriString, contextLength = 1024) {
+                llamaHelper.load(path = uriString, contextLength = _modelConfig.value.contextLength.coerceIn(256, 4096)) {
                     isLoaded = true
                     _status.value = "Ready ($label)"
                 }
@@ -338,6 +370,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun sendMessage(userText: String) {
         val trimmed = userText.trim()
+        if (trimmed.equals("help", ignoreCase = true) || trimmed.equals("/help", ignoreCase = true)) {
+            appendMessage("You", trimmed)
+            appendMessage("Assistant", """
+                |PocketAI Commands & Features:
+                |• Apps & UI: "open yt and search lofi beats and tap the first video"
+                |• WhatsApp: "message rahul it is hot here today" / "open wa and find Rahul's latest PDF"
+                |• Shorts: "open yt and doomscroll" (skips ads & reads progress bar)
+                |• Device Files: "open thermodynamics pdf from Google files"
+                |• Web & Facts: "what is seahorse" / "who is jackie shroff" / toggle Web chip
+                |• Screen Q&A: "explain bernoulli theorem in this question" / "solve Q12 from screen"
+                |• Email: "write an email to x@y.com about leave"
+                |• Device Controls: "turn on flashlight", "set alarm for 7 am", "set timer for 5 minutes"
+                |• App Home: "go home in whatsapp"
+                |• Memory & Cloud: "/remember <fact>", "/cloud <question>"
+                |• Voice & Wake: Tap Voice icon for Pitch, Speed, Metallic DSP, EN/HI/PA & "Ultron" wake word
+            """.trimMargin())
+            return
+        }
         if (trimmed.startsWith("/remember ", ignoreCase = true)) {
             val fact = trimmed.removePrefix("/remember ").trim()
             saveFact(fact); appendMessage("You", trimmed); appendMessage("Tool", "Remembered: $fact"); return
@@ -709,12 +759,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun runNextStep(extraNote: String?) {
         if (!_isNavigating.value) return
         _isGenerating.value = true
-        val historyTurns = _messages.value.filter { (it.role == "You" || it.role == "Assistant") && it.text.isNotBlank() }.takeLast(6)
+        val historyTurns = _messages.value.filter { (it.role == "You" || it.role == "Assistant") && it.text.isNotBlank() }.takeLast(_modelConfig.value.historyTurns.coerceIn(1, 12))
         appendMessage("Assistant", "") { id -> currentAssistantMsgId = id }
         val rawScreen = PocketAccessibilityService.instance?.getCompressedScreen()
         val screenBlock = if (rawScreen != null && !rawScreen.startsWith("Package: com.pocketai.app")) "\nCurrent screen:\n$rawScreen" else ""
         val factsBlock = if (cachedFacts.isNotEmpty()) "\nKnown user facts:\n" + cachedFacts.joinToString("\n") { "- $it" } else ""
-        val sb = StringBuilder("<|im_start|>system\nYou are Ultron, a cold, calculating, hyper-intelligent synthetic AI—eloquent, imperious, darkly witty. Understand English, Hindi, Punjabi, and Hinglish, and ALWAYS reply in English. Give balanced, 3 to 5 sentence replies when conversing.\nAvailable tools (emit exact tag only when needed):\n[TOOL: open_app|package=<pkg>]\n[TOOL: tap|id=<number>]\n[TOOL: type_text|id=<number>|text=<value>]\n[TOOL: scroll|direction=<up|down|left|right>]\n[TOOL: back]\n[TOOL: read_screen]\n[TOOL: save_memory|fact=<text>]$factsBlock$screenBlock\n<|im_end|>\n")
+        val baseSys = _modelConfig.value.systemPrompt.ifBlank { "You are Ultron, a cold, calculating, hyper-intelligent synthetic AI—eloquent, imperious, darkly witty. Understand English, Hindi, Punjabi, and Hinglish, and ALWAYS reply in English. Give balanced, 3 to 5 sentence replies when conversing." }
+        val sb = StringBuilder("<|im_start|>system\n$baseSys\nAvailable tools (emit exact tag only when needed):\n[TOOL: open_app|package=<pkg>]\n[TOOL: tap|id=<number>]\n[TOOL: type_text|id=<number>|text=<value>]\n[TOOL: scroll|direction=<up|down|left|right>]\n[TOOL: back]\n[TOOL: read_screen]\n[TOOL: save_memory|fact=<text>]$factsBlock$screenBlock\n<|im_end|>\n")
         if (extraNote == null) { for (msg in historyTurns) sb.append("<|im_start|>${if (msg.role == "You") "user" else "assistant"}\n${msg.text}<|im_end|>\n") }
         else sb.append("<|im_start|>user\nGoal: $activeGoal\n$extraNote<|im_end|>\n")
         sb.append("<|im_start|>assistant\n")
