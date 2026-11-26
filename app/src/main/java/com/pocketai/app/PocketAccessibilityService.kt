@@ -487,6 +487,30 @@ class PocketAccessibilityService : AccessibilityService() {
         }
     }
 
+
+    fun typeIntoBottomInput(text: String): String? {
+        val root = rootInActiveWindow ?: return null
+        val editables = mutableListOf<Pair<Int, AccessibilityNodeInfo>>()
+        val rect = Rect()
+        fun walk(node: AccessibilityNodeInfo) {
+            if (node.isEditable && !node.isPassword) {
+                node.getBoundsInScreen(rect)
+                editables.add(rect.bottom to node)
+            }
+            for (i in 0 until node.childCount) {
+                node.getChild(i)?.let { walk(it) }
+            }
+        }
+        walk(root)
+        val target = editables.maxByOrNull { it.first }?.second ?: return null
+        target.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        val args = Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+        }
+        val ok = target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+        return if (ok) "Typed \"$text\" into chat" else null
+    }
+
     fun findEditableId(): Int? {
         return nodeMap.entries.firstOrNull { it.value.second.isEditable }?.key
     }

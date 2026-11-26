@@ -543,19 +543,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (!opened && _choicePrompt.value.isNotEmpty()) {
                     pendingChoiceContinuation = {
                         viewModelScope.launch(Dispatchers.IO) {
-                            var msgBox: Int? = null
-                            for (w in 0 until 4) { val obs = svc.observeScreen(); msgBox = obs.elements.lastOrNull { it.isEditable && it.bounds.bottom > 900 }?.id ?: svc.findEditableId(); if (msgBox != null) break; delay(450L) }
-                            if (msgBox != null) appendMessage("Tool", "${svc.typeText(msgBox, step.extra, false)} (Review & tap Send)")
+                            var typed: String? = null
+                            for (w in 0 until 5) { typed = svc.typeIntoBottomInput(step.extra); if (typed != null) break; delay(450L) }
+                            if (typed != null) appendMessage("Tool", "$typed (Review & tap Send)")
+                            else appendMessage("Tool", "Message box not found")
                             _isNavigating.value = false; updateTask { it.copy(status = TaskStatus.COMPLETED) }
                         }
                     }
                     return false to "Waiting for user to pick contact"
                 }
                 if (!opened) return false to "Could not find chat for '${step.target}'"
-                var msgBox: Int? = null
-                for (w in 0 until 4) { val obs = svc.observeScreen(); msgBox = obs.elements.lastOrNull { it.isEditable && it.bounds.bottom > 900 }?.id ?: svc.findEditableId(); if (msgBox != null) break; delay(450L) }
-                if (msgBox == null) return false to "Message box not found"
-                val res = "${svc.typeText(msgBox, step.extra, false)} (Review & tap Send)"; appendMessage("Tool", res); true to res
+                var typed: String? = null
+                for (w in 0 until 5) {
+                    typed = svc.typeIntoBottomInput(step.extra)
+                    if (typed != null) break
+                    delay(450L)
+                }
+                if (typed == null) return false to "Message box not found"
+                val res = "$typed (Review & tap Send)"; appendMessage("Tool", res); true to res
             }
             TaskAction.FIND_OPEN_PDF -> {
                 if (!svc!!.observeScreen().elements.any { it.isEditable && it.bounds.bottom > 1000 }) return false to "Not inside a chat"
