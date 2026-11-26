@@ -70,31 +70,6 @@ class MainActivity : ComponentActivity() {
                     var showCrash by remember { mutableStateOf(crash) }
                     if (showCrash != null) {
                         Column(modifier = Modifier.fillMaxSize().systemBarsPadding().padding(12.dp)) {
-            if (activeTab == 1) {
-                Column(modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Updates & Credits", style = MaterialTheme.typography.titleLarge, color = accentColor)
-                    Surface(color = GlassFill, shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, dynBorder), modifier = Modifier.fillMaxWidth()) {
-                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text("Credits", style = MaterialTheme.typography.titleMedium, color = accentColor)
-                            Text("• Creator & Lead Developer: aradhyam688-cyfer", color = Color(0xFFF0F0F5))
-                            Text("• Co-Architect & AI Engineering: Gemini", color = Color(0xFFF0F0F5))
-                            Text("• Engine & Stack: llamacpp-kotlin, Qwen2.5 / Unsloth, Jetpack Compose & Room", style = MaterialTheme.typography.bodySmall, color = Color(0xFFB5B5C2))
-                        }
-                    }
-                    Surface(color = GlassFill, shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, dynBorder), modifier = Modifier.fillMaxWidth()) {
-                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text("Changelog", style = MaterialTheme.typography.titleMedium, color = accentColor)
-                            Text("v2.1 — Zero-ANR & Full Upgrade", color = Color.White)
-                            Text("• Offloaded Accessibility scans off main thread + added Ultra-Light/Balanced/Max presets\n• Upgraded Ultron metallic DSP voice + persistent settings\n• Added Mix (Hinglish + Punjabi + Hindi) voice & script normalizer\n• Added Call <contact> (WhatsApp or Phone), date-aware WhatsApp links, and incoming message summarizer\n• Added Live Web Facts in chat, categorized /help, Auto Chat-Templates & Theme Colors", style = MaterialTheme.typography.bodySmall, color = Color(0xFFB5B5C2))
-                        }
-                    }
-                }
-                NavigationBar(containerColor = Color(0xCC0D0D12)) {
-                    NavigationBarItem(selected = false, onClick = { activeTab = 0 }, icon = { Icon(Icons.Rounded.SmartToy, null) }, label = { Text("Assistant") })
-                    NavigationBarItem(selected = true, onClick = { activeTab = 1 }, icon = { Icon(Icons.Rounded.Info, null) }, label = { Text("Updates") })
-                }
-                return@Box
-            }
                             Button(onClick = {
                                 prefs.edit().remove("last_crash").apply()
                                 showCrash = null
@@ -430,6 +405,31 @@ fun PocketAIScreen(vm: MainViewModel = viewModel(), sharedText: String? = null) 
         Box(modifier = Modifier.size(220.dp).align(Alignment.BottomEnd).offset(x = 50.dp, y = (-80).dp).background(Brush.radialGradient(listOf(accentColor.copy(alpha = themeCfg.glowIntensity), Color.Transparent)), CircleShape))
 
         Column(modifier = Modifier.fillMaxSize().systemBarsPadding().padding(12.dp)) {
+            if (activeTab == 1) {
+                Column(modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Updates & Credits", style = MaterialTheme.typography.titleLarge, color = accentColor)
+                    Surface(color = GlassFill, shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, dynBorder), modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("Credits", style = MaterialTheme.typography.titleMedium, color = accentColor)
+                            Text("• Creator & Lead Developer: aradhyam688-cyfer", color = Color(0xFFF0F0F5))
+                            Text("• Co-Architect & AI Engineering: Gemini", color = Color(0xFFF0F0F5))
+                            Text("• Engine & Stack: llamacpp-kotlin, Qwen2.5 / Unsloth, Jetpack Compose & Room", style = MaterialTheme.typography.bodySmall, color = Color(0xFFB5B5C2))
+                        }
+                    }
+                    Surface(color = GlassFill, shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, dynBorder), modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("Changelog", style = MaterialTheme.typography.titleMedium, color = accentColor)
+                            Text("v2.1 — Zero-ANR & Full Upgrade", color = Color.White)
+                            Text("• Offloaded Accessibility scans off main thread + added Ultra-Light/Balanced/Max presets\n• Upgraded Ultron metallic DSP voice + persistent settings\n• Added Mix (Hinglish + Punjabi + Hindi) voice & script normalizer\n• Added Call <contact> (WhatsApp or Phone), date-aware WhatsApp links, and incoming message summarizer\n• Added Live Web Facts in chat, categorized /help, Auto Chat-Templates & Theme Colors", style = MaterialTheme.typography.bodySmall, color = Color(0xFFB5B5C2))
+                        }
+                    }
+                }
+                NavigationBar(containerColor = Color(0xCC0D0D12)) {
+                    NavigationBarItem(selected = false, onClick = { activeTab = 0 }, icon = { Icon(Icons.Rounded.SmartToy, null) }, label = { Text("Assistant") })
+                    NavigationBarItem(selected = true, onClick = { activeTab = 1 }, icon = { Icon(Icons.Rounded.Info, null) }, label = { Text("Updates") })
+                }
+                return@Box
+            }
             val header = buildString {
                 append("$status • Mem:$memoryCount • ${if (fastAuto) "Fast" else "LLM"} • $ramTemp")
                 if (cloudCfg.apiKey.isNotBlank()) append(" • ${cloudCfg.provider.label}")
