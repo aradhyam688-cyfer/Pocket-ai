@@ -59,6 +59,11 @@ class PocketAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {}
 
+    override fun onUnbind(intent: Intent?): Boolean {
+        instance = null
+        return super.onUnbind(intent)
+    }
+
 
     fun showFloatingChoices(
         choices: List<UiElement>,
