@@ -366,7 +366,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         scriptMap.forEach { (k, v) -> t = t.replace(k, " $v ") }
         t = t.replace(Regex("""(?i)^(?:hey\s+ultron|ultron|please|pls|plz|can\s+you|could\s+you|would\s+you|just|bro|yaar|kindly|ek\s+kaam\s+kar)[,\s]+"""), "")
             .replace(Regex("""(?i)\b(please|pls|plz|kindly)\b"""), " ")
-            .replace(Regex("""(?i)\b(msg|msgs)\b"""), "message")
+            .replace(Regex("""(?i)\b(?:send\s+(?:a\s+)?message\s+to|message\s+to|msg|msgs)\b"""), "message").replace(Regex("""(?i)\bsend\s+(?!email\b|mail\b)"""), "message ")
             .replace(Regex("""(?i)\b(ring|dial)\b"""), "call")
             .replace(Regex("""(?i)\byt\b"""), "youtube")
             .replace(Regex("""(?i)\bwa\b"""), "whatsapp")
@@ -487,7 +487,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val docName = input.replaceFirst(Regex("""(?i)^open\s+(?:the\s+)?"""), "").replace(Regex("""(?i)\s+(?:from|in|on)\s+(?:google\s+)?files.*$"""), "").replace(Regex("""(?i)\b(?:pdf|document|file)\b"""), "").trim()
             if (docName.isNotBlank()) return listOf(PlannedStep(TaskAction.OPEN_APP, target = "Files"), PlannedStep(TaskAction.SEARCH, target = docName), PlannedStep(TaskAction.TAP_TARGET, target = docName))
         }
-        if (Regex("""(?i)^(?:message|text|tell|whatsapp)\s+""").containsMatchIn(lowerAll)) {
+        if (Regex("""(?i)^(?:message|text|tell|whatsapp|send)\s+""").containsMatchIn(lowerAll)) {
             val body = input.replaceFirst(Regex("""(?i)^(?:message|text|tell|whatsapp)\s+"""), "").trim()
             val qMatch = Regex("""^(.+?)\s+['"](.+?)['"]$""").find(body)
             val sMatch = Regex("""(?i)^(.+?)\s+(?:saying|that)\s+(.+)$""").find(body)
