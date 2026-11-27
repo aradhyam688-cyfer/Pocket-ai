@@ -585,7 +585,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 |• /help, /remember <fact>, /cloud <question>
                 |• "call mamma" (asks WhatsApp or Phone)
                 |• "think and message bhaiya on <topic>"
-                |• "summarise the latest message mamma sent"
+                |• "summarise the latest message mamma sent" / "summarise the latest pdf rahul sent"
+                |• "summarise what is bernoulli theorem" (stays in-app; web when online)
+                |• Emoji typing: "message bhaiya good morning smiling emoji ❤️"
                 |
                 |[Accessibility Features] (Needs: Accessibility ON)
                 |• WhatsApp: "message <name> <text>", "open wa and tap link he sent yesterday", "open latest pdf mamma sent"
@@ -593,7 +595,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 |• Gestures: "zoom in/out", "scroll up/down", "go home in whatsapp"
                 |
                 |[AI & Web Features] (Needs: GGUF Model OR Cloud AI; Web ON for live facts)
-                |• Document / Screen Q&A: "solve question 12 on screen" (Needs: Accessibility + Model/Cloud)
+                |• Document / PDF Q&A: "solve question 12 on screen", "summarise this pdf" (Needs: Accessibility + Model/Cloud)
                 |• Live Web Facts: Toggle Web ON for real-time facts in any answer
                 |
                 |[Voice & Device Controls]

@@ -436,8 +436,8 @@ fun PocketAIScreen(vm: MainViewModel = viewModel(), sharedText: String? = null) 
                     Surface(color = GlassFill, shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, dynBorder), modifier = Modifier.fillMaxWidth()) {
                         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text("Changelog", style = MaterialTheme.typography.titleMedium, color = accentColor)
-                            Text("v2.1 — Zero-ANR & Full Upgrade", color = Color.White)
-                            Text("• Offloaded Accessibility scans off main thread + added Ultra-Light/Balanced/Max presets\n• Upgraded Ultron metallic DSP voice + persistent settings\n• Added Mix (Hinglish + Punjabi + Hindi) voice & script normalizer\n• Added Call <contact> (WhatsApp or Phone), date-aware WhatsApp links, and incoming message summarizer\n• Added Live Web Facts in chat, categorized /help, Auto Chat-Templates & Theme Colors", style = MaterialTheme.typography.bodySmall, color = Color(0xFFB5B5C2))
+                            Text("v2.2 — PDF Summary, Emojis & Smart Web", color = Color.White)
+                            Text("• Offloaded Accessibility scans off main thread + added Ultra-Light/Balanced/Max presets\n• Upgraded Ultron metallic DSP voice + persistent settings\n• Added Mix (Hinglish + Punjabi + Hindi) voice & script normalizer\n• Added Call <contact> (WhatsApp or Phone), date-aware WhatsApp links, and incoming message summarizer\n• Added Live Web Facts, categorized /help, Auto Chat-Templates & Theme Colors\n• Added PDF Summary (on-screen & WhatsApp), online/offline topic summarise, & emoji typing", style = MaterialTheme.typography.bodySmall, color = Color(0xFFB5B5C2))
                         }
                     }
                 }
