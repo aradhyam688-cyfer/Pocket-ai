@@ -1341,13 +1341,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (step.target.isNotBlank()) delay(1600L)
                 val pkg = svc?.observeScreen()?.packageName.orEmpty()
                 val pdfText = if (svc == null || pkg == "com.pocketai.app") svc?.lastExternalScreenText.orEmpty() else svc.readMultiPagePdfText(2000)
-                val finalPdf = if (pdfText.length < 40 && svc != null) svc.captureScreenOcr() else pdfText
-                if (finalPdf.length < 30) return false to "Could not read text from this PDF"
-                val pdfText = finalPdf
-                val prompt = "Summarize this PDF clearly in 4-6 concise bullet points in English:\n${pdfText.take(1400)}"
+                val resolvedPdf = if (pdfText.length < 40 && svc != null) svc.captureScreenOcr() else pdfText
+                if (resolvedPdf.length < 30) return false to "Could not read text from this PDF"
+                val prompt = "Summarize this PDF clearly in 4-6 concise bullet points in English:\n${resolvedPdf.take(1400)}"
                 if (_cloudConfig.value.apiKey.isNotBlank()) askCloudForHelp(prompt)
                 else if (isLoaded) { _isNavigating.value = true; activeGoal = "Summarize PDF"; runNextStep(extraNote = prompt) }
-                else appendMessage("Assistant", pdfText.lines().take(8).joinToString("\n"))
+                else appendMessage("Assistant", resolvedPdf.lines().take(8).joinToString("\n"))
                 true to "Summarized PDF"
             }
             TaskAction.ZOOM -> { val r = svc?.pinchZoom(step.target == "in") ?: "Access off"; appendMessage("Tool", r); true to r }
