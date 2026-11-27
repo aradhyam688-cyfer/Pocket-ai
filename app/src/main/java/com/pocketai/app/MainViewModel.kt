@@ -8,6 +8,8 @@ import android.hardware.camera2.CameraManager
 import android.net.Uri
 import android.os.BatteryManager
 import android.app.ActivityManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.provider.AlarmClock
 import android.provider.ContactsContract
 import androidx.lifecycle.AndroidViewModel
@@ -336,6 +338,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (_modelConfig.value.autoUnloadOnBg && isLoaded && !_isGenerating.value && !_isNavigating.value) unloadModel()
     }
 
+    private fun isOnline(): Boolean {
+        val cm = getApplication<Application>().getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork ?: return false) ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }
+
     fun clearChat() {
         _messages.value = emptyList()
         viewModelScope.launch(Dispatchers.IO) { messageDao.clearAll() }
@@ -582,7 +590,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         _isNavigating.value = true
         viewModelScope.launch(Dispatchers.IO) {
-            val webCtx = if (_liveWeb.value) CloudHelper.fetchWebText(trimmed) else ""
+            val isSummTopic = Regex("""(?i)^summari[sz]e\s+""").containsMatchIn(trimmed)
+            val topicQ = trimmed.replaceFirst(Regex("""(?i)^summari[sz]e\s+"""), "").trim()
+            val useWeb = (_liveWeb.value || isSummTopic) && isOnline()
+            val webCtx = if (useWeb) CloudHelper.fetchWebText(if (isSummTopic) topicQ else trimmed).take(550) else ""
             runNextStep(extraNote = if (webCtx.isNotBlank()) "Live web context:\n$webCtx\n\nAnswer the user's request concisely in English." else null)
         }
     }
@@ -783,15 +794,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             TaskAction.GO_APP_HOME -> { val r = svc?.goToAppHome(getApplication(), step.target) ?: "Access off"; appendMessage("Tool", r); true to r }
             TaskAction.WEB_SEARCH_NARRATE -> {
+                val webSnip = if (isOnline()) CloudHelper.fetchWebText(step.target).take(600) else ""
                 val url = "https://www.google.com/search?q=" + Uri.encode(step.target)
                 getApplication<Application>().startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
-                appendMessage("Tool", "Opened Google for: ${step.target}"); delay(2800L)
-                val pageText = svc?.readFullScreenText(1600).orEmpty().ifBlank { CloudHelper.fetchWebText(step.target) }
+                appendMessage("Tool", "Opened Google for: ${step.target}"); delay(3400L)
+                val screenRaw = svc?.readFullScreenText(1600).orEmpty()
+                val pageText = webSnip.ifBlank { if (screenRaw.length > 140) screenRaw else "" }
                 if (pageText.isNotBlank()) {
-                    val sp = "Summarize the answer to '${step.target}' concisely in 2-3 sentences in English:\n$pageText"
+                    val sp = "Summarize the answer to '${step.target}' concisely using ONLY these facts:\n$pageText"
                     if (_cloudConfig.value.apiKey.isNotBlank()) askCloudForHelp(sp)
-                    else if (isLoaded) { _isNavigating.value = true; activeGoal = sp; runNextStep(extraNote = sp) }
-                    else appendMessage("Assistant", pageText.lines().filter { it.length > 25 }.take(4).joinToString(" "))
+                    else if (isLoaded) { _isNavigating.value = true; activeGoal = step.target; runNextStep(extraNote = sp) }
+                    else appendMessage("Assistant", pageText.lines().filter { it.length > 20 }.take(4).joinToString(" "))
+                } else {
+                    appendMessage("Assistant", "No live web summary extracted — please check the opened Google page.")
                 }
                 true to "Narrated web search"
             }

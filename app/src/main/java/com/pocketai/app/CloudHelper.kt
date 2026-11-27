@@ -17,23 +17,30 @@ object CloudHelper {
     fun fetchWebText(query: String): String {
         return try {
             val cleanQ = query
-                .replace(Regex("""(?i)\b(?:please|tell me|can you|batao|dass|kya hai|ki hai|search|google|look up)\b"""), " ")
+                .replace(Regex("""(?i)\b(?:please|tell me|can you|what is|what are|who is|who was|where is|when is|summari[sz]e|batao|dass|kya hai|ki hai|search|google|look up)\b"""), " ")
                 .replace(Regex("""\s+"""), " ").trim().ifBlank { query }
-            val url = URL("https://html.duckduckgo.com/html/?q=" + Uri.encode(cleanQ))
-            val conn = (url.openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 8000
-                readTimeout = 10000
+            fun httpGet(u: String): String = (URL(u).openConnection() as HttpURLConnection).run {
+                requestMethod = "GET"; connectTimeout = 7000; readTimeout = 8000
                 setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 15)")
+                inputStream.bufferedReader().use { it.readText() }
             }
-            val html = conn.inputStream.bufferedReader().use { it.readText() }
-            val snippets = Regex("""class="result__snippet"[^>]*>(.*?)</a>""", RegexOption.DOT_MATCHES_ALL)
-                .findAll(html)
+            val ddgHtml = runCatching { httpGet("https://html.duckduckgo.com/html/?q=" + Uri.encode(cleanQ)) }.getOrDefault("")
+            val ddg = Regex("""class="result__snippet"[^>]*>(.*?)</a>""", RegexOption.DOT_MATCHES_ALL)
+                .findAll(ddgHtml)
                 .map { it.groupValues[1].replace(Regex("<[^>]+>"), "").replace("&amp;", "&").replace("&#x27;", "'").trim() }
-                .filter { it.isNotBlank() }
-                .take(4)
-                .toList()
-            if (snippets.isNotEmpty()) snippets.joinToString("\n- ", prefix = "- ") else ""
+                .filter { it.length > 20 }.take(4).toList()
+            if (ddg.isNotEmpty()) return ddg.joinToString("\n- ", prefix = "- ")
+
+            val rssXml = runCatching { httpGet("https://news.google.com/rss/search?q=" + Uri.encode(cleanQ) + "&hl=en-IN&gl=IN&ceid=IN:en") }.getOrDefault("")
+            val news = Regex("""<title>(.*?)</title>""", RegexOption.DOT_MATCHES_ALL)
+                .findAll(rssXml).drop(1)
+                .map { it.groupValues[1].replace("<![CDATA[", "").replace("]]>", "").trim() }
+                .filter { it.length > 15 }.take(4).toList()
+            if (news.isNotEmpty()) return news.joinToString("\n- ", prefix = "- ")
+
+            val wikiJson = runCatching { httpGet("https://en.wikipedia.org/api/rest_v1/page/summary/" + Uri.encode(cleanQ.replace(" ", "_"))) }.getOrDefault("")
+            val extract = runCatching { JSONObject(wikiJson).optString("extract", "") }.getOrDefault("")
+            if (extract.isNotBlank()) "- ${extract.take(500)}" else ""
         } catch (_: Exception) {
             ""
         }
