@@ -163,7 +163,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     is LlamaHelper.LLMEvent.Done -> {
                         _isGenerating.value = false
-                        val reply = _messages.value.lastOrNull()?.text.orEmpty()
+                        var reply = _messages.value.lastOrNull()?.text.orEmpty()
+                        if (reply.isBlank()) {
+                            pendingMsgPerson = null; _isNavigating.value = false
+                            reply = "(No output — try increasing n_ctx in Model Parameters or turning Web off)"
+                            val list = _messages.value.toMutableList()
+                            if (list.isNotEmpty()) { list[list.lastIndex] = list.last().copy(text = reply); _messages.value = list }
+                        }
                         currentAssistantMsgId?.let { id -> viewModelScope.launch(Dispatchers.IO) { messageDao.updateText(id, reply) } }
                         handleTurnCompletion()
                     }
@@ -745,9 +751,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (isLoaded) {
                     pendingMsgPerson = step.target
                     _isNavigating.value = true; updateTask { it.copy(status = TaskStatus.COMPLETED) }
-                    val webCtx = maybeFetchTopicWeb(step.extra)
-                    activeGoal = "Write a concise, helpful WhatsApp message to ${step.target} about: ${step.extra}.$webCtx Output ONLY the message text to send, no quotes, no [TOOL:] tags."
-                    runNextStep(extraNote = activeGoal)
+                    val webCtx = maybeFetchTopicWeb(step.extra).take(450)
+                    val promptNote = "Write a concise, helpful WhatsApp message to ${step.target} about: ${step.extra}.\n$webCtx\nOutput ONLY the message text to send, no quotes, no [TOOL:] tags."
+                    runNextStep(extraNote = promptNote)
                     return true to "Thinking of message for ${step.target}..."
                 } else if (_cloudConfig.value.apiKey.isNotBlank()) {
                     val drafted = CloudHelper.ask(_cloudConfig.value.provider, _cloudConfig.value.apiKey, _cloudConfig.value.model, "Write a concise WhatsApp message about: ${step.extra}${maybeFetchTopicWeb(step.extra)}")
@@ -1100,7 +1106,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val screenBlock = if (rawScreen != null && !rawScreen.startsWith("Package: com.pocketai.app")) "\nCurrent screen:\n$rawScreen" else ""
         val factsBlock = if (cachedFacts.isNotEmpty()) "\nKnown user facts:\n" + cachedFacts.joinToString("\n") { "- $it" } else ""
         val baseSys = _modelConfig.value.systemPrompt.ifBlank { "You are Ultron, a cold, calculating, hyper-intelligent synthetic AI—eloquent, imperious, darkly witty. Understand English, Hindi, Punjabi, and Hinglish, and ALWAYS reply in English. Give balanced, 3 to 5 sentence replies when conversing." }
-        val sysFull = "$baseSys\nAvailable tools (emit exact tag only when needed):\n[TOOL: open_app|package=<pkg>]\n[TOOL: tap|id=<number>]\n[TOOL: type_text|id=<number>|text=<value>]\n[TOOL: scroll|direction=<up|down|left|right>]\n[TOOL: back]\n[TOOL: read_screen]\n[TOOL: save_memory|fact=<text>]$factsBlock$screenBlock"
+        val isPureText = extraNote?.startsWith("Write a concise") == true || extraNote?.startsWith("Summarize") == true
+        val toolsBlock = if (isPureText) "" else "\nAvailable tools (emit exact tag only when needed):\n[TOOL: open_app|package=<pkg>]\n[TOOL: tap|id=<number>]\n[TOOL: type_text|id=<number>|text=<value>]\n[TOOL: scroll|direction=<up|down|left|right>]\n[TOOL: back]\n[TOOL: read_screen]\n[TOOL: save_memory|fact=<text>]$factsBlock$screenBlock"
+        val sysFull = "$baseSys$toolsBlock"
         val tpl = when (_modelConfig.value.chatTemplate) {
             "LLAMA3", "GEMMA", "CHATML" -> _modelConfig.value.chatTemplate
             else -> when {
