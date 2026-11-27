@@ -429,7 +429,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return listOf(PlannedStep(TaskAction.GO_APP_HOME, target = appMatch?.groupValues?.get(1) ?: ""))
         }
         val selfQuestion = Regex("""(?i)\b(?:you|your|ultron)\b""").containsMatchIn(lowerAll)
-        if (!selfQuestion && Regex("""(?i)^(?:who is|who was|what is|what are|where is|when is|google|look up|search web for)\s+(.+)""").containsMatchIn(lowerAll)) {
+        val isFollowUpRef = Regex("""(?i)^(?:what|where)\s+is\s+(?:the\s+(?:guide|answer|link|pdf|file|message|email|reply)|this|that|it)\b""").containsMatchIn(lowerAll)
+        if (!selfQuestion && !isFollowUpRef && Regex("""(?i)^(?:who is|who was|what is|what are|where is|when is|google|look up|search web for)\s+(.+)""").containsMatchIn(lowerAll)) {
             val q = lowerAll.replaceFirst(Regex("""(?i)^(?:google|look up|search web for)\s+"""), "").trim()
             return listOf(PlannedStep(TaskAction.WEB_SEARCH_NARRATE, target = q))
         }
@@ -770,7 +771,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     pendingMsgPerson = step.target
                     _isNavigating.value = true; updateTask { it.copy(status = TaskStatus.COMPLETED) }
                     val webCtx = maybeFetchTopicWeb(step.extra).take(450)
-                    val promptNote = "Write a concise, helpful WhatsApp message to ${step.target} about: ${step.extra}.\n$webCtx\nOutput ONLY the message text to send, no quotes, no [TOOL:] tags."
+                    val promptNote = "Write a concise, helpful WhatsApp message to ${step.target} about: ${step.extra}.\n$webCtx\nWrite the actual steps/content directly (NO intro like "Sure, here is..."), no quotes, no [TOOL:] tags."
                     runNextStep(extraNote = promptNote)
                     return true to "Thinking of message for ${step.target}..."
                 } else if (_cloudConfig.value.apiKey.isNotBlank()) {
@@ -1018,7 +1019,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun maybeFetchTopicWeb(topic: String): String {
-        val needsWeb = _liveWeb.value || Regex("""(?i)\b(?:rate|rates|price|future|futures|market|current|today|news|weather|score|data|trade|trades|situation)\b""").containsMatchIn(topic)
+        val needsWeb = (_liveWeb.value && !Regex("""(?i)^(?:hi|hello|hey|ok|thanks)\b""").containsMatchIn(topic)) || Regex("""(?i)\b(?:price|market|current|today|news|weather|score|2025|2026)\b""").containsMatchIn(topic)
         if (!needsWeb) return ""
         val web = CloudHelper.fetchWebText(topic)
         return if (web.isNotBlank()) {
