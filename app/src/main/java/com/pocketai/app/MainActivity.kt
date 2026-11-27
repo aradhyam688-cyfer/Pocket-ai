@@ -400,6 +400,15 @@ fun PocketAIScreen(vm: MainViewModel = viewModel(), sharedText: String? = null) 
         )
     }
 
+    MaterialTheme(
+        colorScheme = GlassColors.copy(
+            primary = accentColor,
+            secondary = accentColor,
+            secondaryContainer = accentColor.copy(alpha = 0.22f),
+            onSecondaryContainer = accentColor,
+            background = bgColor
+        )
+    ) {
     Box(modifier = Modifier.fillMaxSize().background(bgColor)) {
         Box(modifier = Modifier.size(260.dp).offset(x = (-60).dp, y = 40.dp).background(Brush.radialGradient(listOf(Color(0x28FFFFFF), Color.Transparent)), CircleShape))
         Box(modifier = Modifier.size(220.dp).align(Alignment.BottomEnd).offset(x = 50.dp, y = (-80).dp).background(Brush.radialGradient(listOf(accentColor.copy(alpha = themeCfg.glowIntensity), Color.Transparent)), CircleShape))
@@ -489,7 +498,7 @@ fun PocketAIScreen(vm: MainViewModel = viewModel(), sharedText: String? = null) 
                                 Column(modifier = Modifier.padding(12.dp)) {
                                     Text(msg.role, style = MaterialTheme.typography.labelSmall, color = accentColor)
                                     Spacer(Modifier.height(2.dp))
-                                    Text(msg.text, color = Color(0xFFF0F0F5))
+                                    Text(if (msg.text.isBlank() && isGenerating) "Processing..." else msg.text, color = if (msg.text.isBlank()) accentColor.copy(alpha = 0.85f) else Color(0xFFF0F0F5))
                                 }
                             }
                         }
@@ -515,4 +524,5 @@ fun PocketAIScreen(vm: MainViewModel = viewModel(), sharedText: String? = null) 
             }
         }
     }
+}
 }

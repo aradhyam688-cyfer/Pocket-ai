@@ -391,6 +391,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val q = lowerAll.replaceFirst(Regex("""(?i)^(?:google|look up|search web for)\s+"""), "").trim()
             return listOf(PlannedStep(TaskAction.WEB_SEARCH_NARRATE, target = q))
         }
+        val thinkMatch = Regex("""(?i)(?:open\s+(?:wa|whatsapp)\s*(?:,|and|then)?\s*)?think\s+(?:and\s+)?(?:message|text|tell|reply)\s+([a-zA-Z0-9._-]+)\s+(?:on|about|regarding|that|saying)\s+(.+)$""").find(input)
+        if (thinkMatch != null) {
+            return listOf(PlannedStep(TaskAction.THINK_AND_MESSAGE, target = thinkMatch.groupValues[1].trim(), extra = thinkMatch.groupValues[2].trim()))
+        }
         if (Regex("""(?i)^(?:call|ring|dial)\s+""").containsMatchIn(lowerAll) || Regex("""(?i)\bcall\s+[a-z0-9._-]+""").containsMatchIn(lowerAll)) {
             val mode = when {
                 lowerAll.contains("whatsapp") || lowerAll.contains(" wa ") -> "whatsapp"
@@ -780,10 +784,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             TaskAction.SEARCH -> {
                 for (attempt in 0 until 4) {
                     if (!_isNavigating.value) return false to "Cancelled"
-                    svc!!.getCompressedScreen()
-                    val inputId = svc.findEditableId()
-                    if (inputId != null) { lastSearchQuery = step.target; val r = svc.typeText(inputId, step.target, true); appendMessage("Tool", r); delay(1800L); return true to r }
-                    svc.findAndTapByText("search")?.let { appendMessage("Tool", it); delay(900L) } ?: delay(600L)
+                    svc!!.openOrClearSearchAndType(step.target)?.let { r ->
+                        lastSearchQuery = step.target; appendMessage("Tool", r); delay(1800L); return true to r
+                    }
+                    delay(650L)
                 }
                 false to "Search box not found for '${step.target}'"
             }
@@ -939,6 +943,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         for (attempt in 0 until 4) {
             if (!_isNavigating.value) return false
             svc.getCompressedScreen()
+            if (attempt == 0) {
+                val visible = svc.findMatchingElements(query, skipEditable = true)
+                if (visible.size == 1) { appendMessage("Tool", svc.tap(visible.first().id)); delay(900L); return true }
+            }
             val inputId = svc.findTopEditableId()
             if (inputId != null) {
                 svc.typeText(inputId, query, false); delay(1100L)
@@ -953,7 +961,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     return false
                 }
                 svc.findAndTapByText(query, skipEditable = true)?.let { appendMessage("Tool", it); delay(900L); return true }
-            } else { if (svc.findAndTapByText("search") != null) delay(800L) else delay(500L) }
+            } else { if (svc.findAndTapByText("search") != null || svc.findAndTapByText("ask meta ai") != null) delay(800L) else delay(500L) }
         }
         return false
     }
@@ -976,6 +984,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun askCloudForHelp(query: String, screenContext: String? = null) {
         val cfg = _cloudConfig.value; _isGenerating.value = true
+        appendMessage("Cloud (${cfg.provider.label})", "")
         viewModelScope.launch(Dispatchers.IO) {
             val web = if (_liveWeb.value && screenContext.isNullOrBlank()) CloudHelper.fetchWebText(query) else ""
             val full = buildString {
@@ -984,7 +993,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (!screenContext.isNullOrBlank()) append("Screen context:\n$screenContext\n")
                 append("User request: $query")
             }
-            appendMessage("Cloud (${cfg.provider.label})", CloudHelper.ask(cfg.provider, cfg.apiKey, cfg.model, full))
+            val ans = CloudHelper.ask(cfg.provider, cfg.apiKey, cfg.model, full)
+            val list = _messages.value.toMutableList()
+            if (list.isNotEmpty() && list.last().text.isBlank()) { list[list.lastIndex] = ChatMessage("Cloud (${cfg.provider.label})", ans); _messages.value = list }
+            else appendMessage("Cloud (${cfg.provider.label})", ans)
             _isGenerating.value = false
         }
     }

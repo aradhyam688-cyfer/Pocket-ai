@@ -613,6 +613,32 @@ class PocketAccessibilityService : AccessibilityService() {
         return tap(btn.id)
     }
 
+    fun openOrClearSearchAndType(query: String): String? {
+        findTopEditableId()?.let { return typeText(it, query, submit = true) }
+        val obs = observeScreen(70)
+        val w = resources.displayMetrics.widthPixels
+        val trigger = obs.elements.firstOrNull {
+            val l = it.displayLabel.lowercase()
+            it.bounds.top < 420 && (l.contains("clear") || l == "search" || l.contains("search youtube") || l.contains("ask meta ai"))
+        } ?: obs.elements.firstOrNull {
+            !it.isEditable && it.bounds.top in 60..280 && it.bounds.left > 110 && it.bounds.right < w - 120 && it.displayLabel.isNotBlank()
+        }
+        if (trigger != null) {
+            tap(trigger.id)
+            Thread.sleep(450L)
+            findTopEditableId()?.let { return typeText(it, query, submit = true) }
+            val focused = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            if (focused != null && focused.isEditable) {
+                val args = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, query) }
+                if (focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) focused.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
+                    return "Searched \"$query\""
+                }
+            }
+        }
+        return null
+    }
+
     fun findEditableId(): Int? {
         return nodeMap.entries.firstOrNull { it.value.second.isEditable }?.key
     }
