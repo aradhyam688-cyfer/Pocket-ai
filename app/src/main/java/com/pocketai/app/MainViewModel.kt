@@ -69,7 +69,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val prefs = application.getSharedPreferences("pocketai_cloud", Context.MODE_PRIVATE)
 
     private val _llmFlow = MutableSharedFlow<LlamaHelper.LLMEvent>(extraBufferCapacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST)
-    private val llamaHelper by lazy { LlamaHelper(application.contentResolver, viewModelScope, _llmFlow) }
+    private var _llamaHelper: LlamaHelper? = null
+    private val llamaHelper: LlamaHelper get() = _llamaHelper ?: LlamaHelper(getApplication<Application>().contentResolver, viewModelScope, _llmFlow).also { _llamaHelper = it }
 
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
     val messages = _messages.asStateFlow()
@@ -306,6 +307,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             cachedFacts = memoryDao.getAll().map { it.fact }
             _memoryCount.value = cachedFacts.size
         }
+    }
+
+    fun unloadModel() {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                _llamaHelper?.let { h ->
+                    runCatching { h.stopPrediction() }
+                    h::class.java.methods.firstOrNull { it.name in setOf("release", "unload", "free", "destroy", "close") && it.parameterCount == 0 }?.invoke(h)
+                }
+            }
+            _llamaHelper = null
+            isLoaded = false
+            _isGenerating.value = false
+            System.gc()
+            _status.value = "Unloaded (RAM freed)"
+            refreshRamTemp()
+        }
+    }
+
+    fun onAppBackgrounded() {
+        if (_modelConfig.value.autoUnloadOnBg && isLoaded && !_isGenerating.value && !_isNavigating.value) unloadModel()
     }
 
     fun clearChat() {

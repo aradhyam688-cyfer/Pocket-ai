@@ -137,7 +137,14 @@ fun PocketAIScreen(vm: MainViewModel = viewModel(), sharedText: String? = null) 
     }
 
     LaunchedEffect(voiceCfg) { voice.applyVoiceSettings(voiceCfg.voiceName, voiceCfg.pitch, voiceCfg.rate, voiceCfg.langTag, voiceCfg.metallic) }
-    DisposableEffect(Unit) { onDispose { voice.release() } }
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, ev ->
+            if (ev == androidx.lifecycle.Lifecycle.Event.ON_STOP) vm.onAppBackgrounded()
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs); voice.release() }
+    }
 
     LaunchedEffect(isGenerating, messages.size) {
         if (!isGenerating && voiceEnabled) {
@@ -242,6 +249,7 @@ fun PocketAIScreen(vm: MainViewModel = viewModel(), sharedText: String? = null) 
                         OutlinedButton(onClick = { vm.loadModel(m.uri, m.name); showModelsDialog = false }, modifier = Modifier.fillMaxWidth()) { Text(m.name) }
                     }
                     Button(onClick = { showModelsDialog = false; picker.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth()) { Text("Browse New .gguf") }
+                    if (status.startsWith("Ready")) OutlinedButton(onClick = { vm.unloadModel(); showModelsDialog = false }, modifier = Modifier.fillMaxWidth()) { Text("Unload Current Model (Free RAM)") }
                     OutlinedButton(onClick = { showModelsDialog = false; showParamsDialog = true }, modifier = Modifier.fillMaxWidth()) { Text("Model Parameters (n_ctx, Prompt)") }
                 }
             },
