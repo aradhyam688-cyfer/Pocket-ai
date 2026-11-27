@@ -364,6 +364,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             "ਦੱਸ" to "tell", "ਸੁਣਾਓ" to "summarise", "ਵਾਪਸ" to "back", "ਬੰਦ" to "off"
         )
         scriptMap.forEach { (k, v) -> t = t.replace(k, " $v ") }
+        t = t.replace(Regex("""(?i)^(?:hey\s+ultron|ultron|please|pls|plz|can\s+you|could\s+you|would\s+you|just|bro|yaar|kindly|ek\s+kaam\s+kar)[,\s]+"""), "")
+            .replace(Regex("""(?i)\b(please|pls|plz|kindly)\b"""), " ")
+            .replace(Regex("""(?i)\b(msg|msgs)\b"""), "message")
+            .replace(Regex("""(?i)\b(ring|dial)\b"""), "call")
+            .replace(Regex("""(?i)\byt\b"""), "youtube")
+            .replace(Regex("""(?i)\bwa\b"""), "whatsapp")
         return t
             .replace(Regex("""(?i)\b(kholo|khol|chalao|kholna|khol\s+de)\b"""), "open")
             .replace(Regex("""(?i)\b(bhejo|bhej|likho|likh|ghallo|kar\s+de|bhej\s+de)\b"""), "message")
@@ -455,7 +461,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 PlannedStep(TaskAction.SUMMARIZE_MESSAGES, target = person, extra = dateF)
             )
         }
-        val isWa = Regex("""(?i)\b(?:whatsapp|wa|sent|sent\s+me)\b""").containsMatchIn(input)
+        val isWa = Regex("""(?i)\b(?:whatsapp|wa|sent|send|bheja)\b""").containsMatchIn(input)
         val wantsPdf = Regex("""(?i)\b(?:pdf|document)\b""").containsMatchIn(input)
         val wantsLink = Regex("""(?i)\blink\b""").containsMatchIn(input)
         if (isWa && (wantsPdf || wantsLink)) {
@@ -463,6 +469,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 Regex("""(?i)\b(?:with|from|by)\s+([a-zA-Z0-9 ._-]+?)(?=\s*(?:,|\band\b|\bthen\b|\bsent\b|\bon\b|\bin\b|$))""").find(input)?.groupValues?.get(1)
                     ?: Regex("""(?i)\b(?:last|latest)\s+(?:pdf|document|link)\s+([a-zA-Z0-9 ._-]+?)\s+sent\b""").find(input)?.groupValues?.get(1)
                     ?: Regex("""(?i)\b([a-zA-Z0-9._-]+)'s\s+(?:last|latest)\s+(?:pdf|document|link)\b""").find(input)?.groupValues?.get(1)
+                    ?: Regex("""(?i)\b([a-zA-Z0-9._-]+)\s+(?:sent|send)\s+(?:a\s+|the\s+)?(?:last|latest)?\s*(?:pdf|document|link)\b""").find(input)?.groupValues?.get(1)
             var person = rawPerson?.trim().orEmpty()
             if (person.lowercase() in setOf("he", "she", "him", "her", "they") && lastContactName.isNotBlank()) {
                 person = lastContactName

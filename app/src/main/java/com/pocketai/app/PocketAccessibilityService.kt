@@ -582,24 +582,44 @@ class PocketAccessibilityService : AccessibilityService() {
             .sortedByDescending { it.bounds.bottom }
     }
 
-    fun readIncomingMessages(dateFilter: String = ""): List<String> {
-        val obs = observeScreen(120)
+    fun readIncomingMessages(dateFilter: String = "", senderFilter: String = ""): List<String> {
+        val obs = observeScreen(140)
         val dm = resources.displayMetrics
-        val range = findDateDividerBounds(obs.elements, dm.widthPixels, dateFilter)
+        val w = dm.widthPixels
+        val range = findDateDividerBounds(obs.elements, w, dateFilter)
         val timeRe = Regex("""^\d{1,2}:\d{2}(\s?[aApP][mM])?$""")
-        return obs.elements
+        val skipLabels = setOf("unread messages", "today", "yesterday", "delivered", "read", "sent", "forwarded")
+        val incoming = obs.elements
             .filter { el ->
                 val txt = el.displayLabel.trim()
+                val leftMargin = el.bounds.left
+                val rightMargin = w - el.bounds.right
                 !el.isEditable && txt.length >= 2 &&
                     el.bounds.top > 220 && el.bounds.bottom < dm.heightPixels - 180 &&
-                    el.bounds.left < dm.widthPixels * 0.28 && el.bounds.right < dm.widthPixels * 0.88 &&
-                    !timeRe.matches(txt) && !txt.equals("Unread messages", true) &&
-                    !txt.equals("TODAY", true) && !txt.equals("YESTERDAY", true) &&
+                    leftMargin < w * 0.22 && rightMargin > leftMargin + 24 &&
+                    !timeRe.matches(txt) && txt.lowercase() !in skipLabels &&
                     (range == null || (el.bounds.top >= range.first && el.bounds.bottom <= range.second))
             }
             .sortedBy { it.bounds.top }
-            .map { it.displayLabel.trim() }
-            .distinct()
+
+        val grouped = mutableListOf<String>()
+        var i = 0
+        while (i < incoming.size) {
+            val cur = incoming[i]
+            val next = incoming.getOrNull(i + 1)
+            if (next != null && (next.bounds.top - cur.bounds.bottom) in 0..48 &&
+                cur.displayLabel.length in 2..30 && !cur.displayLabel.contains(" ") ||
+                (next != null && (next.bounds.top - cur.bounds.bottom) in 0..40 && cur.displayLabel.length <= 28 && next.displayLabel.length > cur.displayLabel.length)) {
+                val combined = "${cur.displayLabel.trim()}: ${next.displayLabel.trim()}"
+                grouped.add(combined)
+                i += 2
+            } else {
+                grouped.add(cur.displayLabel.trim())
+                i += 1
+            }
+        }
+        val sf = senderFilter.trim().lowercase()
+        return if (sf.isNotBlank()) grouped.filter { it.lowercase().contains(sf) }.ifEmpty { grouped } else grouped.distinct()
     }
 
     fun tapWhatsAppCallButton(): String {
