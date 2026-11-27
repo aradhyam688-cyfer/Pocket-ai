@@ -91,7 +91,7 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun PocketAIScreen(initialSharedText: String? = null, initialStream: android.net.Uri? = null, initialMime: String = "", openPal: Boolean = false, vm: MainViewModel = viewModel()) {
+fun PocketAIScreen(sharedText: String? = null, initialStream: android.net.Uri? = null, initialMime: String = "", openPal: Boolean = false, vm: MainViewModel = viewModel()) {
     LaunchedEffect(sharedText) { if (!sharedText.isNullOrBlank()) vm.sendMessage("Explain this: $sharedText") }
     val context = LocalContext.current
     val messages by vm.messages.collectAsState()
