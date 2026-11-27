@@ -254,7 +254,7 @@ fun PocketAIScreen(vm: MainViewModel = viewModel(), sharedText: String? = null) 
                     if (status.startsWith("Ready")) OutlinedButton(onClick = { vm.unloadModel(); showModelsDialog = false }, modifier = Modifier.fillMaxWidth()) { Text("Unload Current Model (Free RAM)") }
                     OutlinedButton(onClick = { showModelsDialog = false; showParamsDialog = true }, modifier = Modifier.fillMaxWidth()) { Text("Model Parameters (n_ctx, Prompt)") }
                     Spacer(Modifier.height(4.dp))
-                    Text("Download GGUF (HuggingFace)", style = MaterialTheme.typography.labelMedium, color = accentColor)
+                    Text("Download GGUF (HuggingFace)", style = MaterialTheme.typography.labelMedium, color = Color(themeCfg.accentHex))
                     dlStatus?.let { (lbl, prog) ->
                         Text(lbl, style = MaterialTheme.typography.bodySmall)
                         LinearProgressIndicator(progress = { prog }, modifier = Modifier.fillMaxWidth())
