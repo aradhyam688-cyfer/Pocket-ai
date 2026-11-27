@@ -578,7 +578,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 return listOf(
                     PlannedStep(TaskAction.OPEN_APP, target = "WhatsApp"),
                     PlannedStep(TaskAction.TAP_TARGET, target = person),
-                    PlannedStep(finalAction, extra = when { lowerAll.contains("yesterday") -> "yesterday"; lowerAll.contains("today") -> "today"; else -> "" })
+                    PlannedStep(finalAction, extra = listOfNotNull(when { lowerAll.contains("yesterday") -> "yesterday"; lowerAll.contains("today") -> "today"; else -> null }, listOf("instagram", "youtube", "github", "facebook", "spotify", "reddit").firstOrNull { lowerAll.contains(it) }).joinToString("|"))
                 )
             }
         }
@@ -973,7 +973,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 var links: List<UiElement> = emptyList()
                 for (attempt in 0 until 4) {
                     if (!_isNavigating.value) return false to "Cancelled"
-                    links = a.findLinksInChat(step.extra); if (links.isNotEmpty()) break
+                    val parts = step.extra.split("|"); val df = parts.firstOrNull { it == "today" || it == "yesterday" }.orEmpty(); val kf = parts.firstOrNull { it != "today" && it != "yesterday" }.orEmpty(); links = a.findLinksInChat(df, kf); if (links.isNotEmpty()) break
                     a.scroll("up"); delay(800L)
                 }
                 if (links.isEmpty()) return false to "No link found in this chat"

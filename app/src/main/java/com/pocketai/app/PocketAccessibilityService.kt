@@ -569,17 +569,19 @@ class PocketAccessibilityService : AccessibilityService() {
         return startY to endY
     }
 
-    fun findLinksInChat(dateFilter: String = ""): List<UiElement> {
-        val obs = observeScreen(120)
+    fun findLinksInChat(dateFilter: String = "", keywordFilter: String = ""): List<UiElement> {
+        val obs = observeScreen(140)
         val w = resources.displayMetrics.widthPixels
         val range = findDateDividerBounds(obs.elements, w, dateFilter)
-        val urlRegex = Regex("""(?i)(?:https?://|www\.|youtube\.com/|youtu\.be/|wa\.me/)""")
-        return obs.elements
+        val urlRegex = Regex("""(?i)(?:https?://|www\.|youtube\.com|youtu\.be|instagram\.com|view on instagram|github\.com|facebook\.com|twitter\.com|x\.com|reddit\.com|spotify\.com|wa\.me/)""")
+        val matches = obs.elements
             .filter { el ->
                 !el.isEditable && urlRegex.containsMatchIn(el.displayLabel) &&
                     (range == null || (el.bounds.top >= range.first && el.bounds.bottom <= range.second))
             }
             .sortedByDescending { it.bounds.bottom }
+        val kw = keywordFilter.trim().lowercase()
+        return if (kw.isNotBlank()) matches.filter { it.displayLabel.lowercase().contains(kw) }.ifEmpty { matches } else matches
     }
 
     fun readIncomingMessages(dateFilter: String = "", senderFilter: String = ""): List<String> {
