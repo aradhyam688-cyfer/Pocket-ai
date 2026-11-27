@@ -6,6 +6,9 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.hardware.camera2.CameraManager
 import android.net.Uri
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 import android.os.BatteryManager
 import android.app.ActivityManager
 import android.net.ConnectivityManager
@@ -99,6 +102,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val pendingCallContact = _pendingCallContact.asStateFlow()
     private val _ramTemp = MutableStateFlow("Checking...")
     val ramTemp = _ramTemp.asStateFlow()
+    private val _downloadStatus = MutableStateFlow<Pair<String, Float>?>(null)
+    val downloadStatus = _downloadStatus.asStateFlow()
+    private var downloadJob: kotlinx.coroutines.Job? = null
     private var lastModelName = "" 
     val voiceConfig = _voiceConfig.asStateFlow()
 
@@ -315,6 +321,64 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             cachedFacts = memoryDao.getAll().map { it.fact }
             _memoryCount.value = cachedFacts.size
         }
+    }
+
+    fun downloadModel(fileName: String, rawUrl: String) {
+        if (downloadJob?.isActive == true) return
+        downloadJob = viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val dir = File(getApplication<Application>().filesDir, "models").apply { mkdirs() }
+                val dest = File(dir, fileName)
+                val tmp = File(dir, "$fileName.part")
+                var curUrl = rawUrl.trim()
+                var conn: HttpURLConnection
+                var redirects = 0
+                while (true) {
+                    conn = (URL(curUrl).openConnection() as HttpURLConnection).apply {
+                        instanceFollowRedirects = false
+                        connectTimeout = 15000; readTimeout = 30000
+                        setRequestProperty("User-Agent", "PocketAI/2.2")
+                    }
+                    val code = conn.responseCode
+                    if (code in 300..399 && redirects < 6) {
+                        curUrl = conn.getHeaderField("Location") ?: break
+                        conn.disconnect(); redirects++
+                    } else break
+                }
+                val total = conn.contentLengthLong
+                _downloadStatus.value = "Starting $fileName..." to 0f
+                conn.inputStream.use { inp ->
+                    tmp.outputStream().use { out ->
+                        val buf = ByteArray(16384)
+                        var done = 0L; var n: Int; var lastUi = 0L
+                        while (inp.read(buf).also { n = it } != -1) {
+                            if (!kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]!!.isActive) throw java.util.concurrent.CancellationException()
+                            out.write(buf, 0, n); done += n
+                            val now = System.currentTimeMillis()
+                            if (now - lastUi > 350L) {
+                                lastUi = now
+                                val pct = if (total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else 0f
+                                val mbDone = done / (1024 * 1024); val mbTot = if (total > 0) total / (1024 * 1024) else 0L
+                                _downloadStatus.value = "$fileName: ${mbDone}MB${if (mbTot > 0) "/${mbTot}MB" else ""}" to pct
+                            }
+                        }
+                    }
+                }
+                if (dest.exists()) dest.delete()
+                tmp.renameTo(dest)
+                _downloadStatus.value = null
+                loadModel(Uri.fromFile(dest).toString(), fileName)
+            }.onFailure { e ->
+                _downloadStatus.value = null
+                if (e !is java.util.concurrent.CancellationException) _status.value = "Download failed: ${e.message}"
+            }
+        }
+    }
+
+    fun cancelDownload() {
+        downloadJob?.cancel()
+        downloadJob = null
+        _downloadStatus.value = null
     }
 
     fun unloadModel() {

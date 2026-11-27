@@ -109,6 +109,7 @@ fun PocketAIScreen(vm: MainViewModel = viewModel(), sharedText: String? = null) 
     val themeCfg by vm.themeConfig.collectAsState()
     val pendingCall by vm.pendingCallContact.collectAsState()
     val ramTemp by vm.ramTemp.collectAsState()
+    val dlStatus by vm.downloadStatus.collectAsState()
     var activeTab by remember { mutableStateOf(0) }
     var showThemeDialog by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { vm.refreshRamTemp() }
@@ -235,11 +236,12 @@ fun PocketAIScreen(vm: MainViewModel = viewModel(), sharedText: String? = null) 
     }
 
     if (showModelsDialog) {
+        var customUrl by remember { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { showModelsDialog = false },
-            title = { Text("Recent Models") },
+            title = { Text("Models & Downloads") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = autoLoadLast, onCheckedChange = { vm.setAutoLoadLast(it) })
                         Text("Auto-load last model")
@@ -251,6 +253,28 @@ fun PocketAIScreen(vm: MainViewModel = viewModel(), sharedText: String? = null) 
                     Button(onClick = { showModelsDialog = false; picker.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth()) { Text("Browse New .gguf") }
                     if (status.startsWith("Ready")) OutlinedButton(onClick = { vm.unloadModel(); showModelsDialog = false }, modifier = Modifier.fillMaxWidth()) { Text("Unload Current Model (Free RAM)") }
                     OutlinedButton(onClick = { showModelsDialog = false; showParamsDialog = true }, modifier = Modifier.fillMaxWidth()) { Text("Model Parameters (n_ctx, Prompt)") }
+                    Spacer(Modifier.height(4.dp))
+                    Text("Download GGUF (HuggingFace)", style = MaterialTheme.typography.labelMedium, color = accentColor)
+                    dlStatus?.let { (lbl, prog) ->
+                        Text(lbl, style = MaterialTheme.typography.bodySmall)
+                        LinearProgressIndicator(progress = { prog }, modifier = Modifier.fillMaxWidth())
+                        TextButton(onClick = { vm.cancelDownload() }) { Text("Cancel Download") }
+                    } ?: run {
+                        listOf(
+                            Triple("Qwen2.5-0.5B (398 MB)", "qwen2.5-0.5b-instruct-q4_k_m.gguf", "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf"),
+                            Triple("Llama-3.2-1B (808 MB)", "Llama-3.2-1B-Instruct-Q4_K_M.gguf", "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf"),
+                            Triple("Qwen2.5-1.5B (986 MB)", "qwen2.5-1.5b-instruct-q4_k_m.gguf", "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf")
+                        ).forEach { (title, fn, url) ->
+                            OutlinedButton(onClick = { vm.downloadModel(fn, url) }, modifier = Modifier.fillMaxWidth()) { Text("Download $title") }
+                        }
+                        OutlinedTextField(value = customUrl, onValueChange = { customUrl = it }, label = { Text("Or paste .gguf URL") }, singleLine = true)
+                        if (customUrl.isNotBlank()) {
+                            Button(onClick = {
+                                val fn = customUrl.substringAfterLast("/").substringBefore("?").ifBlank { "custom.gguf" }
+                                vm.downloadModel(fn, customUrl)
+                            }, modifier = Modifier.fillMaxWidth()) { Text("Download Custom GGUF") }
+                        }
+                    }
                 }
             },
             confirmButton = {},
