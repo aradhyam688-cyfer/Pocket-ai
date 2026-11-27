@@ -661,6 +661,26 @@ class PocketAccessibilityService : AccessibilityService() {
         return null
     }
 
+    fun captureScreenOcr(): String {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return ""
+        val latch = java.util.concurrent.CountDownLatch(1)
+        var text = ""
+        takeScreenshot(android.view.Display.DEFAULT_DISPLAY, mainExecutor, object : TakeScreenshotCallback {
+            override fun onSuccess(sr: ScreenshotResult) {
+                runCatching {
+                    val bmp = android.graphics.Bitmap.wrapHardwareBuffer(sr.hardwareBuffer, sr.colorSpace)
+                        ?.copy(android.graphics.Bitmap.Config.ARGB_8888, false)
+                    sr.hardwareBuffer.close()
+                    if (bmp != null) { text = OcrHelper.extractText(bmp); bmp.recycle() }
+                }
+                latch.countDown()
+            }
+            override fun onFailure(errorCode: Int) { latch.countDown() }
+        })
+        latch.await(6, java.util.concurrent.TimeUnit.SECONDS)
+        return text
+    }
+
     fun readMultiPagePdfText(maxChars: Int = 2000): String {
         val pages = mutableListOf<String>()
         pages.add(readFullScreenText(1000))

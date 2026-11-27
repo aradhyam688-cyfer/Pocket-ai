@@ -37,6 +37,19 @@ data class CloudConfig(
     val model: String = CloudProvider.GEMINI.defaultModel,
     val autoHelp: Boolean = true
 )
+data class VisionConfig(
+    val modelUri: String = "",
+    val mmprojUri: String = "",
+    val modelName: String = "",
+    val contextLength: Int = 2048,
+    val maxImageSize: Int = 512,
+    val temperature: Float = 0.5f,
+    val threads: Int = 4,
+    val autoSwapRam: Boolean = true
+)
+data class AgentProfile(val name: String, val systemPrompt: String, val contextLength: Int, val temp: Float, val fastAuto: Boolean)
+data class DevLogEntry(val prompt: String, val output: String, val durationMs: Long)
+data class BenchmarkResult(val modelName: String, val tokensPerSec: Float, val durationMs: Long, val ramInfo: String)
 data class ThemeConfig(
     val accentHex: Long = 0xFFA6FF3BL,
     val bgMode: Int = 0,
@@ -70,6 +83,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val db = AppDatabase.get(application)
     private val messageDao = db.messageDao()
     private val memoryDao = db.memoryDao()
+    private val usageDao = db.usageDao()
+    private val knowledgeDao = db.knowledgeDao()
+    private val pluginDao = db.pluginDao()
     private val taskDao = db.taskDao()
     private val prefs = application.getSharedPreferences("pocketai_cloud", Context.MODE_PRIVATE)
 
@@ -105,6 +121,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _downloadStatus = MutableStateFlow<Pair<String, Float>?>(null)
     val downloadStatus = _downloadStatus.asStateFlow()
     private var downloadJob: kotlinx.coroutines.Job? = null
+    private val _offlineOnly = MutableStateFlow(prefs.getBoolean("offlineOnly", false))
+    val offlineOnly = _offlineOnly.asStateFlow()
+    private val _devMode = MutableStateFlow(prefs.getBoolean("devMode", false))
+    val devMode = _devMode.asStateFlow()
+    private val _stepDebugger = MutableStateFlow(false)
+    val stepDebugger = _stepDebugger.asStateFlow()
+    private val _debugWaiting = MutableStateFlow(false)
+    val debugWaiting = _debugWaiting.asStateFlow()
+    private var debugGate = kotlinx.coroutines.CompletableDeferred<Boolean>()
+    private val _visionConfig = MutableStateFlow(loadVisionConfig())
+    val visionConfig = _visionConfig.asStateFlow()
+    private val _activeProfile = MutableStateFlow(prefs.getString("profile", "Ultron Default") ?: "Ultron Default")
+    val activeProfile = _activeProfile.asStateFlow()
+    private val _usageEvents = MutableStateFlow<List<UsageEventEntity>>(emptyList())
+    val usageEvents = _usageEvents.asStateFlow()
+    private val _knowledgeDocs = MutableStateFlow<List<String>>(emptyList())
+    val knowledgeDocs = _knowledgeDocs.asStateFlow()
+    private val _plugins = MutableStateFlow<List<PluginEntity>>(emptyList())
+    val plugins = _plugins.asStateFlow()
+    private val _devLogs = MutableStateFlow<List<DevLogEntry>>(emptyList())
+    val devLogs = _devLogs.asStateFlow()
+    private val _benchmarkResult = MutableStateFlow<BenchmarkResult?>(null)
+    val benchmarkResult = _benchmarkResult.asStateFlow()
+    private val _autoSuggestions = MutableStateFlow<List<String>>(emptyList())
+    val autoSuggestions = _autoSuggestions.asStateFlow()
+    private val _toolToggles = MutableStateFlow(loadToolToggles())
+    val toolToggles = _toolToggles.asStateFlow()
+    private var genStartMs = 0L
+    private var lastSentPrompt = ""
     private var lastModelName = "" 
     val voiceConfig = _voiceConfig.asStateFlow()
 
@@ -153,6 +198,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _messages.value = messageDao.getAll().map { ChatMessage(it.role, it.text) }
             cachedFacts = memoryDao.getAll().map { it.fact }
             _memoryCount.value = cachedFacts.size
+            refreshAnalyticsAndKb()
             if (_autoLoadLast.value) {
                 delay(1500L)
                 _recentModels.value.firstOrNull()?.let { loadModel(it.uri, it.name) }
@@ -179,6 +225,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             if (list.isNotEmpty()) { list[list.lastIndex] = list.last().copy(text = reply); _messages.value = list }
                         }
                         currentAssistantMsgId?.let { id -> viewModelScope.launch(Dispatchers.IO) { messageDao.updateText(id, reply) } }
+                        val dur = (System.currentTimeMillis() - genStartMs).coerceAtLeast(1L); logUsage("Local", activeGoal, dur, reply.isNotBlank()); if (_devMode.value) _devLogs.value = (listOf(DevLogEntry(lastSentPrompt.take(400), reply.take(400), dur)) + _devLogs.value).take(12)
                         handleTurnCompletion()
                     }
                     is LlamaHelper.LLMEvent.Error -> {
@@ -423,10 +470,121 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun isOnline(): Boolean {
+        if (_offlineOnly.value) return false
         val cm = getApplication<Application>().getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
         val caps = cm.getNetworkCapabilities(cm.activeNetwork ?: return false) ?: return false
         return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }
+
+    val builtInProfiles = listOf(
+        AgentProfile("Ultron Default", "", 1024, 0.7f, true),
+        AgentProfile("Study Tutor", "You are a clear, patient tutor. Explain concepts step by step with formulas and examples.", 1536, 0.4f, false),
+        AgentProfile("WhatsApp Helper", "You draft concise, natural, polite WhatsApp replies in English.", 1024, 0.6f, true),
+        AgentProfile("Coder", "You are an expert Kotlin/Python engineer. Give concise, bug-free code.", 2048, 0.3f, false)
+    )
+
+    private fun loadVisionConfig() = VisionConfig(
+        modelUri = prefs.getString("visModelUri", "") ?: "",
+        mmprojUri = prefs.getString("visMmprojUri", "") ?: "",
+        modelName = prefs.getString("visModelName", "") ?: "",
+        contextLength = prefs.getInt("visCtx", 2048),
+        maxImageSize = prefs.getInt("visSize", 512),
+        temperature = prefs.getFloat("visTemp", 0.5f),
+        threads = prefs.getInt("visThreads", 4),
+        autoSwapRam = prefs.getBoolean("visSwap", true)
+    )
+
+    fun saveVisionConfig(vc: VisionConfig) {
+        prefs.edit().putString("visModelUri", vc.modelUri).putString("visMmprojUri", vc.mmprojUri)
+            .putString("visModelName", vc.modelName).putInt("visCtx", vc.contextLength)
+            .putInt("visSize", vc.maxImageSize).putFloat("visTemp", vc.temperature)
+            .putInt("visThreads", vc.threads).putBoolean("visSwap", vc.autoSwapRam).apply()
+        _visionConfig.value = vc
+    }
+
+    private fun loadToolToggles(): Map<String, Boolean> {
+        val keys = listOf("WhatsApp", "YouTube", "Calls", "PDF/OCR", "Live Web", "Device Controls", "Email")
+        return keys.associateWith { prefs.getBoolean("tool_$it", true) }
+    }
+
+    fun toggleToolEnabled(name: String) {
+        val cur = _toolToggles.value.toMutableMap()
+        val next = !(cur[name] ?: true)
+        cur[name] = next
+        prefs.edit().putBoolean("tool_$name", next).apply()
+        _toolToggles.value = cur
+    }
+
+    fun toggleOfflineOnly() {
+        val next = !_offlineOnly.value
+        prefs.edit().putBoolean("offlineOnly", next).apply()
+        _offlineOnly.value = next
+        if (next && _liveWeb.value) _liveWeb.value = false
+    }
+
+    fun toggleDevMode() {
+        val next = !_devMode.value
+        prefs.edit().putBoolean("devMode", next).apply()
+        _devMode.value = next
+    }
+
+    fun toggleStepDebugger() { _stepDebugger.value = !_stepDebugger.value }
+    fun debugStepContinue(runStep: Boolean) { _debugWaiting.value = false; debugGate.complete(runStep) }
+
+    fun selectProfile(p: AgentProfile) {
+        prefs.edit().putString("profile", p.name).apply()
+        _activeProfile.value = p.name
+        _fastAuto.value = p.fastAuto
+        saveModelConfig(_modelConfig.value.copy(systemPrompt = p.systemPrompt, contextLength = p.contextLength, temperature = p.temp))
+    }
+
+    private fun refreshAnalyticsAndKb() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val evs = usageDao.getRecent()
+            _usageEvents.value = evs
+            _autoSuggestions.value = evs.filter { it.command.length > 5 && it.success }
+                .groupingBy { it.command.lowercase().trim() }.eachCount()
+                .filter { it.value >= 2 }.keys.take(4).toList()
+            _knowledgeDocs.value = knowledgeDao.getAll().map { it.docName }.distinct()
+            _plugins.value = pluginDao.getAll()
+        }
+    }
+
+    private fun logUsage(source: String, command: String = "", durationMs: Long = 0L, success: Boolean = true) {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { usageDao.insert(UsageEventEntity(source = source, command = command, durationMs = durationMs, success = success)) }
+            refreshAnalyticsAndKb()
+        }
+    }
+
+    fun clearUsageStats() { viewModelScope.launch(Dispatchers.IO) { usageDao.clearAll(); refreshAnalyticsAndKb() } }
+
+    fun importKnowledgeDoc(uri: Uri, name: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            appendMessage("Tool", "Indexing $name into Local Knowledge Base...")
+            val txt = KnowledgeHelper.extractDocText(getApplication(), uri, name)
+            val chunks = KnowledgeHelper.chunkText(name, txt)
+            if (chunks.isEmpty()) { appendMessage("Tool", "No readable text found in $name"); return@launch }
+            knowledgeDao.deleteDoc(name)
+            knowledgeDao.insertAll(chunks)
+            refreshAnalyticsAndKb()
+            appendMessage("Tool", "Indexed $name (${chunks.size} chunks) offline!")
+        }
+    }
+
+    fun deleteKnowledgeDoc(name: String) {
+        viewModelScope.launch(Dispatchers.IO) { knowledgeDao.deleteDoc(name); refreshAnalyticsAndKb() }
+    }
+
+    fun addPlugin(name: String, trigger: String, actionType: String, payload: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            pluginDao.insert(PluginEntity(name = name.trim(), trigger = trigger.trim().lowercase(), actionType = actionType, payload = payload.trim()))
+            refreshAnalyticsAndKb()
+        }
+    }
+
+    fun togglePlugin(p: PluginEntity) { viewModelScope.launch(Dispatchers.IO) { pluginDao.update(p.copy(enabled = !p.enabled)); refreshAnalyticsAndKb() } }
+    fun deletePlugin(p: PluginEntity) { viewModelScope.launch(Dispatchers.IO) { pluginDao.delete(p); refreshAnalyticsAndKb() } }
 
     fun clearChat() {
         _messages.value = emptyList()
@@ -680,6 +838,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         activeGoal = trimmed; stepCount = 0; lastToolTag = ""; consecutiveFailures = 0; lastSearchQuery = ""
         appendMessage("You", trimmed)
 
+        val matchedPlugin = _plugins.value.firstOrNull { it.enabled && it.trigger.isNotBlank() && trimmed.lowercase().startsWith(it.trigger) }
+        if (matchedPlugin != null) {
+            when (matchedPlugin.actionType) {
+                "OPEN_URL" -> {
+                    val q = trimmed.removePrefix(matchedPlugin.trigger).trim()
+                    val u = matchedPlugin.payload.replace("{QUERY}", Uri.encode(q))
+                    getApplication<Application>().startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u)).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
+                    appendMessage("Tool", "Plugin '${matchedPlugin.name}' opened URL"); logUsage("Plugin", trimmed); return
+                }
+                "PROMPT" -> {
+                    val q = trimmed.removePrefix(matchedPlugin.trigger).trim()
+                    val combined = matchedPlugin.payload.replace("{QUERY}", q)
+                    if (isLoaded) { _isNavigating.value = true; activeGoal = combined; runNextStep(extraNote = combined); return }
+                }
+            }
+        }
+        if (Regex("""(?i)\b(?:summari[sz]e|read|check)\b.*\bnotifications?\b""").containsMatchIn(trimmed)) {
+            summarizeNotifications(); return
+        }
         if (_fastAuto.value) {
             val rawPlan = buildPlan(trimmed)
             if (rawPlan.isNotEmpty()) {
@@ -760,6 +937,71 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun analyzeImageUri(uri: Uri, userPrompt: String = "Describe and extract all important text/details from this image.") {
+        val vc = _visionConfig.value
+        appendMessage("You", "[Image] $userPrompt")
+        viewModelScope.launch(Dispatchers.IO) {
+            if (vc.modelUri.isNotBlank() && vc.mmprojUri.isNotBlank()) {
+                val imgFile = OcrHelper.downscaleImageToTempFile(getApplication(), uri, vc.maxImageSize)
+                if (imgFile != null) {
+                    if (vc.autoSwapRam && isLoaded) unloadModel()
+                    appendMessage("Tool", "Loading Vision model (${vc.modelName.ifBlank { "VLM" }})...")
+                    var ran = false
+                    runCatching {
+                        llamaHelper.load(path = vc.modelUri, contextLength = vc.contextLength, mmprojPath = vc.mmprojUri) {
+                            if (!ran) {
+                                ran = true; isLoaded = true; _isGenerating.value = true
+                                appendMessage("Assistant", "") { id -> currentAssistantMsgId = id }
+                                llamaHelper.predict(prompt = userPrompt, imagePath = Uri.fromFile(imgFile).toString())
+                            }
+                        }
+                    }.onFailure { appendMessage("Tool", "Vision error: ${it.message}") }
+                    return@launch
+                }
+            }
+            val ocrText = OcrHelper.extractTextFromUri(getApplication(), uri)
+            if (ocrText.isBlank()) { appendMessage("Assistant", "No readable text found in image (load a Vision GGUF + mmproj for visual understanding)."); return@launch }
+            appendMessage("Tool", "OCR extracted ${ocrText.length} chars")
+            val prompt = "$userPrompt\n\nExtracted image text:\n${ocrText.take(1400)}"
+            if (isLoaded) { _isNavigating.value = true; activeGoal = userPrompt; runNextStep(extraNote = prompt) }
+            else if (_cloudConfig.value.apiKey.isNotBlank() && !_offlineOnly.value) askCloudForHelp(prompt)
+            else appendMessage("Assistant", ocrText)
+        }
+    }
+
+    fun summarizeNotifications() {
+        val list = SmartNotificationService.snapshot()
+        if (list.isEmpty()) {
+            appendMessage("Assistant", "No notifications captured yet. Enable PocketAI under Settings -> Notification Access.")
+            return
+        }
+        val grouped = list.groupBy { it.category }.entries.joinToString("\n") { (cat, items) ->
+            "[$cat]\n" + items.take(5).joinToString("\n") { "- ${it.app} | ${it.title}: ${it.text}" }
+        }
+        val prompt = "Summarize and prioritize these notifications concisely in English:\n$grouped"
+        if (isLoaded) { _isNavigating.value = true; activeGoal = "Summarize notifications"; runNextStep(extraNote = prompt) }
+        else if (_cloudConfig.value.apiKey.isNotBlank() && !_offlineOnly.value) askCloudForHelp(prompt)
+        else appendMessage("Assistant", grouped)
+    }
+
+    fun runBenchmark() {
+        if (!isLoaded) { appendMessage("Tool", "Load a GGUF model first to benchmark."); return }
+        viewModelScope.launch(Dispatchers.IO) {
+            val t0 = System.currentTimeMillis()
+            var toks = 0
+            val job = launch { _llmFlow.collect { if (it is LlamaHelper.LLMEvent.Ongoing) toks++ } }
+            _isGenerating.value = true
+            appendMessage("Assistant", "") { id -> currentAssistantMsgId = id }
+            runCatching { llamaHelper.predict("<|im_start|>user\nList 5 uses of AI in 2 sentences.<|im_end|>\n<|im_start|>assistant\n") }
+            while (_isGenerating.value) delay(100L)
+            job.cancel()
+            val dt = (System.currentTimeMillis() - t0).coerceAtLeast(1L)
+            val tps = toks / (dt / 1000f)
+            refreshRamTemp()
+            _benchmarkResult.value = BenchmarkResult(lastModelName.ifBlank { "Loaded GGUF" }, tps, dt, _ramTemp.value)
+        }
+    }
+
     fun dismissChoices() {
         _choicePrompt.value = emptyList(); pendingChoiceContinuation = null; _isNavigating.value = false
         updateTask { it.copy(status = TaskStatus.CANCELLED) }
@@ -819,12 +1061,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (step.action !in noSvcActions && svc == null) {
                 appendMessage("Tool", "Accessibility service not enabled"); updateTask { it.copy(status = TaskStatus.FAILED) }; _isNavigating.value = false; break
             }
+            if (_stepDebugger.value) {
+                debugGate = kotlinx.coroutines.CompletableDeferred()
+                _debugWaiting.value = true
+                appendMessage("Tool", "Debugger paused before: ${step.action} (${step.target})")
+                val proceed = debugGate.await()
+                if (!proceed) { updateTask { it.copy(currentStepIndex = it.currentStepIndex + 1) }; continue }
+            }
             val (ok, obs) = runCatching { runSingleStep(svc, step) }.getOrElse { false to "Step error: ${it.message}" }
+            if (ok && task.currentStepIndex + 1 >= task.plan.size) logUsage("Fast", task.originalInstruction, 0L, true)
             if (ok) {
                 updateTask { it.copy(currentStepIndex = it.currentStepIndex + 1, observations = it.observations + obs) }
                 delay(700L)
             } else {
                 if (_choicePrompt.value.isNotEmpty() || _pendingCallContact.value != null) return
+                if (obs.contains("Cancelled", true)) { _isNavigating.value = false; break }
                 if (step.action == TaskAction.TAP_TARGET && task.retryCount < task.maxRetries && svc != null) {
                     appendMessage("Tool", "Replanning: searching for '${step.target}'...")
                     if (searchAndTapFallback(svc, step.target)) {
@@ -832,8 +1083,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         delay(800L); continue
                     }
                 }
+                if (task.retryCount < 1) {
+                    appendMessage("Tool", "Retrying step (${step.action.name})...")
+                    updateTask { it.copy(retryCount = it.retryCount + 1) }
+                    delay(850L); continue
+                }
                 if (_choicePrompt.value.isNotEmpty()) return
                 updateTask { it.copy(status = TaskStatus.FAILED, observations = it.observations + obs) }
+                logUsage("Fast", task.originalInstruction, 0L, false)
                 handleAutomationStruggle(obs, svc?.getCompressedScreen() ?: ""); _isNavigating.value = false; break
             }
         }
@@ -1084,7 +1341,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (step.target.isNotBlank()) delay(1600L)
                 val pkg = svc?.observeScreen()?.packageName.orEmpty()
                 val pdfText = if (svc == null || pkg == "com.pocketai.app") svc?.lastExternalScreenText.orEmpty() else svc.readMultiPagePdfText(2000)
-                if (pdfText.length < 40) return false to "Could not read text from this PDF (may be scanned images or still loading)"
+                val finalPdf = if (pdfText.length < 40 && svc != null) svc.captureScreenOcr() else pdfText
+                if (finalPdf.length < 30) return false to "Could not read text from this PDF"
+                val pdfText = finalPdf
                 val prompt = "Summarize this PDF clearly in 4-6 concise bullet points in English:\n${pdfText.take(1400)}"
                 if (_cloudConfig.value.apiKey.isNotBlank()) askCloudForHelp(prompt)
                 else if (isLoaded) { _isNavigating.value = true; activeGoal = "Summarize PDF"; runNextStep(extraNote = prompt) }
@@ -1156,7 +1415,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (!screenContext.isNullOrBlank()) append("Screen context:\n$screenContext\n")
                 append("User request: $query")
             }
+            if (_offlineOnly.value) { _isGenerating.value = false; appendMessage("Tool", "Offline-first mode is ON — Cloud API disabled"); return@launch }
+            val t0 = System.currentTimeMillis()
             val ans = CloudHelper.ask(cfg.provider, cfg.apiKey, cfg.model, full)
+            val dur = System.currentTimeMillis() - t0
+            logUsage(cfg.provider.label, query, dur, !ans.startsWith("Cloud error"))
+            if (_devMode.value) _devLogs.value = (listOf(DevLogEntry(full.take(400), ans.take(400), dur)) + _devLogs.value).take(12)
             val list = _messages.value.toMutableList()
             if (list.isNotEmpty() && list.last().text.isBlank()) { list[list.lastIndex] = ChatMessage("Cloud (${cfg.provider.label})", ans); _messages.value = list }
             else appendMessage("Cloud (${cfg.provider.label})", ans)
@@ -1238,7 +1502,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         appendMessage("Assistant", "") { id -> currentAssistantMsgId = id }
         val rawScreen = PocketAccessibilityService.instance?.getCompressedScreen()
         val screenBlock = if (rawScreen != null && !rawScreen.startsWith("Package: com.pocketai.app")) "\nCurrent screen:\n$rawScreen" else ""
-        val factsBlock = if (cachedFacts.isNotEmpty()) "\nKnown user facts:\n" + cachedFacts.joinToString("\n") { "- $it" } else ""
+        val kbChunks = kotlinx.coroutines.runBlocking { KnowledgeHelper.searchTopChunks(activeGoal, knowledgeDao.getAll(), 2) }
+        val kbBlock = if (kbChunks.isNotEmpty()) "\nLocal knowledge:\n" + kbChunks.joinToString("\n") { "[${it.docName}] ${it.content}" } else ""
+        val factsBlock = (if (cachedFacts.isNotEmpty()) "\nKnown user facts:\n" + cachedFacts.joinToString("\n") { "- $it" } else "") + kbBlock
         val baseSys = _modelConfig.value.systemPrompt.ifBlank { "You are Ultron, a cold, calculating, hyper-intelligent synthetic AI—eloquent, imperious, darkly witty. Understand English, Hindi, Punjabi, and Hinglish, and ALWAYS reply in English. Give balanced, 3 to 5 sentence replies when conversing." }
         val isPureText = extraNote?.startsWith("Write a concise") == true || extraNote?.startsWith("Summarize") == true
         val toolsBlock = if (isPureText) "" else "\nAvailable tools (emit exact tag only when needed):\n[TOOL: open_app|package=<pkg>]\n[TOOL: tap|id=<number>]\n[TOOL: type_text|id=<number>|text=<value>]\n[TOOL: scroll|direction=<up|down|left|right>]\n[TOOL: back]\n[TOOL: read_screen]\n[TOOL: save_memory|fact=<text>]$factsBlock$screenBlock"
@@ -1272,6 +1538,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 sb.append("<|im_start|>assistant\n")
             }
         }
-        viewModelScope.launch(Dispatchers.IO) { runCatching { llamaHelper.predict(sb.toString()) }.onFailure { _isGenerating.value = false; _isNavigating.value = false } }
+        lastSentPrompt = sb.toString(); genStartMs = System.currentTimeMillis()
+        viewModelScope.launch(Dispatchers.IO) { runCatching { llamaHelper.predict(lastSentPrompt) }.onFailure { _isGenerating.value = false; _isNavigating.value = false } }
     }
 }

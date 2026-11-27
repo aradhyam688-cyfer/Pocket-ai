@@ -44,6 +44,7 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("io.github.ljcamargo:llamacpp-kotlin:0.4.0")
+    implementation("com.google.mlkit:text-recognition:16.0.1")
     implementation("androidx.room:room-runtime:2.8.5")
     kapt("androidx.room:room-compiler:2.8.5")
 }

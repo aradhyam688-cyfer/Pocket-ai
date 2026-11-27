@@ -64,6 +64,9 @@ class MainActivity : ComponentActivity() {
         }
         val crash = prefs.getString("last_crash", null)
         val shared = intent?.getStringExtra(Intent.EXTRA_PROCESS_TEXT) ?: intent?.getStringExtra(Intent.EXTRA_TEXT)
+        val sharedStream = if (android.os.Build.VERSION.SDK_INT >= 33) intent?.getParcelableExtra(Intent.EXTRA_STREAM, android.net.Uri::class.java) else @Suppress("DEPRECATION") intent?.getParcelableExtra(Intent.EXTRA_STREAM)
+        val sharedMime = intent?.type.orEmpty()
+        val openPal = intent?.getBooleanExtra("open_palette", false) == true
         setContent {
             MaterialTheme(colorScheme = GlassColors) {
                 Surface(color = MaterialTheme.colorScheme.background) {
@@ -112,6 +115,19 @@ fun PocketAIScreen(vm: MainViewModel = viewModel(), sharedText: String? = null) 
     val dlStatus by vm.downloadStatus.collectAsState()
     var activeTab by remember { mutableStateOf(0) }
     var showThemeDialog by remember { mutableStateOf(false) }
+    var showPalette by remember { mutableStateOf(openPal) }
+    var showVisionDialog by remember { mutableStateOf(false) }
+    val dbgWait by vm.debugWaiting.collectAsState()
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> uri?.let { vm.analyzeImageUri(it) } }
+    val kbPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let { vm.importKnowledgeDoc(it, it.lastPathSegment ?: "doc") } }
+    val vlmPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let { context.contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION); vm.saveVisionConfig(vm.visionConfig.value.copy(modelUri = it.toString(), modelName = it.lastPathSegment ?: "VLM")) } }
+    val mmprojPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let { context.contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION); vm.saveVisionConfig(vm.visionConfig.value.copy(mmprojUri = it.toString())) } }
+    LaunchedEffect(initialStream) {
+        if (initialStream != null) {
+            if (initialMime.startsWith("image/")) vm.analyzeImageUri(initialStream)
+            else if (initialMime == "application/pdf") vm.importKnowledgeDoc(initialStream, "shared.pdf")
+        }
+    }
     LaunchedEffect(Unit) { vm.refreshRamTemp() }
 
     var input by remember { mutableStateOf("") }
@@ -395,6 +411,8 @@ fun PocketAIScreen(vm: MainViewModel = viewModel(), sharedText: String? = null) 
         )
     }
 
+    if (showPalette) CommandPaletteDialog(vm, onDismiss = { showPalette = false }, onRun = { vm.sendMessage(it) })
+    if (showVisionDialog) VisionDialog(vm, onPickVisionModel = { vlmPicker.launch(arrayOf("*/*")) }, onPickMmproj = { mmprojPicker.launch(arrayOf("*/*")) }, onDismiss = { showVisionDialog = false })
     if (showThemeDialog) {
         var selAccent by remember { mutableStateOf(themeCfg.accentHex) }
         var selBg by remember { mutableStateOf(themeCfg.bgMode) }
@@ -447,6 +465,26 @@ fun PocketAIScreen(vm: MainViewModel = viewModel(), sharedText: String? = null) 
 
         Column(modifier = Modifier.fillMaxSize().systemBarsPadding().padding(12.dp)) {
             if (activeTab == 1) {
+                Box(modifier = Modifier.weight(1f).fillMaxWidth()) { ToolsManagerTab(vm, accentColor, dynBorder, onPickKbDoc = { kbPicker.launch(arrayOf("*/*")) }, onOpenVision = { showVisionDialog = true }, onSwitchToChat = { activeTab = 0 }) }
+                NavigationBar(containerColor = Color(0xCC0D0D12)) {
+                    NavigationBarItem(selected = false, onClick = { activeTab = 0 }, icon = { Icon(Icons.Rounded.SmartToy, null) }, label = { Text("Chat") })
+                    NavigationBarItem(selected = true, onClick = { activeTab = 1 }, icon = { Icon(Icons.Rounded.Build, null) }, label = { Text("Tools") })
+                    NavigationBarItem(selected = false, onClick = { activeTab = 2 }, icon = { Icon(Icons.Rounded.BarChart, null) }, label = { Text("Stats") })
+                    NavigationBarItem(selected = false, onClick = { activeTab = 3 }, icon = { Icon(Icons.Rounded.Info, null) }, label = { Text("Updates") })
+                }
+                return@Box
+            }
+            if (activeTab == 2) {
+                Box(modifier = Modifier.weight(1f).fillMaxWidth()) { DashboardTab(vm, accentColor, dynBorder) }
+                NavigationBar(containerColor = Color(0xCC0D0D12)) {
+                    NavigationBarItem(selected = false, onClick = { activeTab = 0 }, icon = { Icon(Icons.Rounded.SmartToy, null) }, label = { Text("Chat") })
+                    NavigationBarItem(selected = false, onClick = { activeTab = 1 }, icon = { Icon(Icons.Rounded.Build, null) }, label = { Text("Tools") })
+                    NavigationBarItem(selected = true, onClick = { activeTab = 2 }, icon = { Icon(Icons.Rounded.BarChart, null) }, label = { Text("Stats") })
+                    NavigationBarItem(selected = false, onClick = { activeTab = 3 }, icon = { Icon(Icons.Rounded.Info, null) }, label = { Text("Updates") })
+                }
+                return@Box
+            }
+            if (activeTab == 3) {
                 Column(modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Updates & Credits", style = MaterialTheme.typography.titleLarge, color = accentColor)
                     Surface(color = GlassFill, shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, dynBorder), modifier = Modifier.fillMaxWidth()) {
@@ -460,14 +498,16 @@ fun PocketAIScreen(vm: MainViewModel = viewModel(), sharedText: String? = null) 
                     Surface(color = GlassFill, shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, dynBorder), modifier = Modifier.fillMaxWidth()) {
                         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text("Changelog", style = MaterialTheme.typography.titleMedium, color = accentColor)
-                            Text("v2.2 — PDF Summary, Emojis & Smart Web", color = Color.White)
+                            Text("v3.0 — Dashboard, Tools/Plugins, Vision, OCR & Profiles", color = Color.White)
                             Text("• Offloaded Accessibility scans off main thread + added Ultra-Light/Balanced/Max presets\n• Upgraded Ultron metallic DSP voice + persistent settings\n• Added Mix (Hinglish + Punjabi + Hindi) voice & script normalizer\n• Added Call <contact> (WhatsApp or Phone), date-aware WhatsApp links, and incoming message summarizer\n• Added Live Web Facts, categorized /help, Auto Chat-Templates & Theme Colors\n• Added PDF Summary (on-screen & WhatsApp), online/offline topic summarise, & emoji typing", style = MaterialTheme.typography.bodySmall, color = Color(0xFFB5B5C2))
                         }
                     }
                 }
                 NavigationBar(containerColor = Color(0xCC0D0D12)) {
-                    NavigationBarItem(selected = false, onClick = { activeTab = 0 }, icon = { Icon(Icons.Rounded.SmartToy, null) }, label = { Text("Assistant") })
-                    NavigationBarItem(selected = true, onClick = { activeTab = 1 }, icon = { Icon(Icons.Rounded.Info, null) }, label = { Text("Updates") })
+                    NavigationBarItem(selected = false, onClick = { activeTab = 0 }, icon = { Icon(Icons.Rounded.SmartToy, null) }, label = { Text("Chat") })
+                    NavigationBarItem(selected = false, onClick = { activeTab = 1 }, icon = { Icon(Icons.Rounded.Build, null) }, label = { Text("Tools") })
+                    NavigationBarItem(selected = false, onClick = { activeTab = 2 }, icon = { Icon(Icons.Rounded.BarChart, null) }, label = { Text("Stats") })
+                    NavigationBarItem(selected = true, onClick = { activeTab = 3 }, icon = { Icon(Icons.Rounded.Info, null) }, label = { Text("Updates") })
                 }
                 return@Box
             }
@@ -499,6 +539,8 @@ fun PocketAIScreen(vm: MainViewModel = viewModel(), sharedText: String? = null) 
                 FilterChip(selected = liveWeb, onClick = { vm.toggleLiveWeb() }, leadingIcon = { Icon(Icons.Rounded.Public, contentDescription = null, modifier = Modifier.size(16.dp)) }, label = { Text("Web") })
                 FilterChip(selected = voiceEnabled, onClick = { voiceEnabled = !voiceEnabled; if (!voiceEnabled) voice.stopSpeaking() }, leadingIcon = { Icon(if (voiceEnabled) Icons.Rounded.VolumeUp else Icons.Rounded.VolumeOff, contentDescription = null, modifier = Modifier.size(16.dp)) }, label = { Text(if (voiceEnabled) "TTS" else "Mute") })
                 FilledTonalIconButton(colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = GlassFill, contentColor = accentColor), modifier = Modifier.border(1.dp, dynBorder, CircleShape), onClick = { showThemeDialog = true }) { Icon(Icons.Rounded.Palette, contentDescription = "Theme") }
+                FilledTonalIconButton(colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = GlassFill, contentColor = accentColor), modifier = Modifier.border(1.dp, dynBorder, CircleShape), onClick = { showPalette = true }) { Icon(Icons.Rounded.Search, contentDescription = "Palette") }
+                FilledTonalIconButton(colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = GlassFill, contentColor = Color.White), modifier = Modifier.border(1.dp, dynBorder, CircleShape), onClick = { imagePicker.launch("image/*") }) { Icon(Icons.Rounded.Image, contentDescription = "OCR/Vision") }
                 IconButton(onClick = { vm.clearChat() }) { Icon(Icons.Rounded.DeleteOutline, contentDescription = "Clear", tint = Color(0xFFB5B5C2)) }
                 if (activeTask?.status == TaskStatus.RUNNING) {
                     FilledTonalIconButton(onClick = { vm.pauseTask() }) { Icon(Icons.Rounded.Pause, contentDescription = "Pause") }
@@ -539,6 +581,7 @@ fun PocketAIScreen(vm: MainViewModel = viewModel(), sharedText: String? = null) 
             }
 
             Row(modifier = Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (dbgWait) { Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { Button(onClick = { vm.debugStepContinue(true) }) { Text("Step") }; OutlinedButton(onClick = { vm.debugStepContinue(false) }) { Text("Skip") } } }
                 OutlinedTextField(value = input, onValueChange = { input = it }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(24.dp), placeholder = { Text("Command, question, or Mic") })
                 FilledTonalIconButton(colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = GlassFill, contentColor = Color.White), modifier = Modifier.border(1.dp, dynBorder, CircleShape), enabled = !isGenerating && !isNavigating, onClick = {
                     if (isListening) voice.stopListening()
@@ -551,8 +594,10 @@ fun PocketAIScreen(vm: MainViewModel = viewModel(), sharedText: String? = null) 
             }
             Spacer(Modifier.height(4.dp))
             NavigationBar(containerColor = Color(0xCC0D0D12)) {
-                NavigationBarItem(selected = true, onClick = { activeTab = 0 }, icon = { Icon(Icons.Rounded.SmartToy, null) }, label = { Text("Assistant") })
-                NavigationBarItem(selected = false, onClick = { activeTab = 1 }, icon = { Icon(Icons.Rounded.Info, null) }, label = { Text("Updates") })
+                NavigationBarItem(selected = true, onClick = { activeTab = 0 }, icon = { Icon(Icons.Rounded.SmartToy, null) }, label = { Text("Chat") })
+                NavigationBarItem(selected = false, onClick = { activeTab = 1 }, icon = { Icon(Icons.Rounded.Build, null) }, label = { Text("Tools") })
+                NavigationBarItem(selected = false, onClick = { activeTab = 2 }, icon = { Icon(Icons.Rounded.BarChart, null) }, label = { Text("Stats") })
+                NavigationBarItem(selected = false, onClick = { activeTab = 3 }, icon = { Icon(Icons.Rounded.Info, null) }, label = { Text("Updates") })
             }
         }
     }
