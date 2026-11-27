@@ -563,7 +563,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _choicePrompt.value = emptyList()
         val cont = pendingChoiceContinuation; pendingChoiceContinuation = null
         viewModelScope.launch(Dispatchers.IO) {
-            val res = PocketAccessibilityService.instance?.tap(element.id) ?: "Accessibility off"
+            val svc = PocketAccessibilityService.instance; val res = svc?.let { it.findAndTapByText(element.displayLabel, skipEditable = true) ?: it.tap(element.id) } ?: "Accessibility off"
             appendMessage("Tool", res)
             updateTask { it.copy(status = TaskStatus.RUNNING, observations = it.observations + res) }
             delay(900L); cont?.invoke()
@@ -677,6 +677,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 updateTask { it.copy(currentStepIndex = it.currentStepIndex + 1, observations = it.observations + obs) }
                 delay(700L)
             } else {
+                if (_choicePrompt.value.isNotEmpty() || _pendingCallContact.value != null) return
                 if (step.action == TaskAction.TAP_TARGET && task.retryCount < task.maxRetries && svc != null) {
                     appendMessage("Tool", "Replanning: searching for '${step.target}'...")
                     if (searchAndTapFallback(svc, step.target)) {
