@@ -639,6 +639,22 @@ class PocketAccessibilityService : AccessibilityService() {
         return null
     }
 
+    fun isInsideChat(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        fun scan(n: AccessibilityNodeInfo): Boolean {
+            if (n.isEditable) {
+                val r = android.graphics.Rect(); n.getBoundsInScreen(r)
+                if (r.bottom > 1000) return true
+            }
+            for (i in 0 until n.childCount) {
+                val c = n.getChild(i) ?: continue
+                if (scan(c)) return true
+            }
+            return false
+        }
+        return scan(root)
+    }
+
     fun findEditableId(): Int? {
         return nodeMap.entries.firstOrNull { it.value.second.isEditable }?.key
     }

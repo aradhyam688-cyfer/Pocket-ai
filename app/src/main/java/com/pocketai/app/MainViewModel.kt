@@ -861,7 +861,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             TaskAction.FIND_OPEN_LINK -> {
                 val a = svc ?: return false to "Accessibility off"
-                if (!a.observeScreen(120).elements.any { it.isEditable && it.bounds.bottom > 1000 }) { delay(700L); if (!a.observeScreen(120).elements.any { it.isEditable && it.bounds.bottom > 1000 }) return false to "Not inside a chat" }
+                if (!a.isInsideChat()) { delay(700L); if (!a.isInsideChat()) return false to "Not inside a chat" }
                 var links: List<UiElement> = emptyList()
                 for (attempt in 0 until 4) {
                     if (!_isNavigating.value) return false to "Cancelled"
@@ -875,7 +875,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 true to res
             }
             TaskAction.FIND_OPEN_PDF -> {
-                if (!svc!!.observeScreen(120).elements.any { it.isEditable && it.bounds.bottom > 1000 }) { delay(700L); if (!svc.observeScreen(120).elements.any { it.isEditable && it.bounds.bottom > 1000 }) return false to "Not inside a chat" }
+                if (!svc!!.isInsideChat()) { delay(700L); if (!svc.isInsideChat()) return false to "Not inside a chat" }
                 var pdfs: List<UiElement> = emptyList()
                 for (attempt in 0 until 5) { if (!_isNavigating.value) return false to "Cancelled"; pdfs = svc.findPdfDocuments(); if (pdfs.isNotEmpty()) break; svc.scroll("up"); delay(800L) }
                 if (pdfs.isEmpty()) return false to "No PDF found in this chat"
