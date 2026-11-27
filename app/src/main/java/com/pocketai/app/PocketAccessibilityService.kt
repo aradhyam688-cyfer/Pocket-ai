@@ -659,6 +659,20 @@ class PocketAccessibilityService : AccessibilityService() {
         return null
     }
 
+    fun readMultiPagePdfText(maxChars: Int = 2000): String {
+        val pages = mutableListOf<String>()
+        pages.add(readFullScreenText(1000))
+        scroll("down")
+        Thread.sleep(650L)
+        pages.add(readFullScreenText(1000))
+        return pages.flatMap { it.lines() }
+            .map { it.trim() }
+            .filter { it.length > 2 }
+            .distinct()
+            .joinToString("\n")
+            .take(maxChars)
+    }
+
     fun isInsideChat(): Boolean {
         val root = rootInActiveWindow ?: return false
         fun scan(n: AccessibilityNodeInfo): Boolean {

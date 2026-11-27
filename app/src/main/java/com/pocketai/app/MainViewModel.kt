@@ -338,6 +338,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (_modelConfig.value.autoUnloadOnBg && isLoaded && !_isGenerating.value && !_isNavigating.value) unloadModel()
     }
 
+    private fun applyEmojiPhrases(text: String): String {
+        val map = listOf(
+            Regex("""(?i)\b(?:laughing|laugh|haha|lol)\s+emoji\b""") to "😂",
+            Regex("""(?i)\b(?:red\s+heart|heart|love)\s+emoji\b""") to "❤️",
+            Regex("""(?i)\b(?:fire|lit)\s+emoji\b""") to "🔥",
+            Regex("""(?i)\b(?:thumbs\s+up|like)\s+emoji\b""") to "👍",
+            Regex("""(?i)\b(?:smiling|smile|happy)\s+emoji\b""") to "😊",
+            Regex("""(?i)\b(?:crying|cry|sad)\s+emoji\b""") to "😢",
+            Regex("""(?i)\b(?:clapping|clap)\s+emoji\b""") to "👏",
+            Regex("""(?i)\b(?:namaste|folded\s+hands|pray)\s+emoji\b""") to "🙏",
+            Regex("""(?i)\b(?:party|celebrate|celebration)\s+emoji\b""") to "🎉",
+            Regex("""(?i)\b(?:cool|sunglasses)\s+emoji\b""") to "😎",
+            Regex("""(?i)\b100\s+emoji\b""") to "💯",
+            Regex("""(?i)\bok\s+emoji\b""") to "👌"
+        )
+        var out = text
+        for ((re, em) in map) out = out.replace(re, em)
+        return out.replace(Regex("""\s+"""), " ").trim()
+    }
+
     private fun isOnline(): Boolean {
         val cm = getApplication<Application>().getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
         val caps = cm.getNetworkCapabilities(cm.activeNetwork ?: return false) ?: return false
@@ -447,6 +467,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val person = input.replace(Regex("""(?i)^(?:please\s+)?(?:call|ring|dial)\s+"""), "")
                 .replace(Regex("""(?i)\b(?:on|via)\s+(?:whatsapp|wa|phone|sim).*$"""), "").trim()
             if (person.isNotBlank()) return listOf(PlannedStep(TaskAction.CALL_CONTACT, target = person, extra = mode))
+        }
+        val wantsPdfSumm = Regex("""(?i)\b(?:summari[sz]e|summary)\b""").containsMatchIn(lowerAll) && Regex("""(?i)\b(?:pdf|document)\b""").containsMatchIn(lowerAll)
+        if (wantsPdfSumm) {
+            val rawP = Regex("""(?i)\b(?:with|from|by)\s+([a-zA-Z0-9._-]+?)(?=\s*(?:,|$|\bsent\b))""").find(input)?.groupValues?.get(1)
+                ?: Regex("""(?i)\b(?:last|latest)?\s*(?:pdf|document)\s+([a-zA-Z0-9._-]+?)\s+sent\b""").find(input)?.groupValues?.get(1)
+                ?: Regex("""(?i)\b([a-zA-Z0-9._-]+)'s\s+(?:last|latest)?\s*(?:pdf|document)\b""").find(input)?.groupValues?.get(1)
+            var person = rawP?.trim().orEmpty()
+            if (person.lowercase() in setOf("he", "she", "him", "her", "they") && lastContactName.isNotBlank()) person = lastContactName
+            return if (person.isNotBlank()) listOf(
+                PlannedStep(TaskAction.OPEN_APP, target = "WhatsApp"),
+                PlannedStep(TaskAction.TAP_TARGET, target = person),
+                PlannedStep(TaskAction.FIND_OPEN_PDF),
+                PlannedStep(TaskAction.SUMMARIZE_PDF, target = person)
+            ) else listOf(PlannedStep(TaskAction.SUMMARIZE_PDF))
         }
         val wantsSummarize = Regex("""(?i)\b(?:summari[sz]e|summary|read|what\s+did)\b""").containsMatchIn(lowerAll) &&
             Regex("""(?i)\b(?:message|messages|msg|sent|send)\b""").containsMatchIn(lowerAll)
@@ -771,7 +805,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     pendingMsgPerson = step.target
                     _isNavigating.value = true; updateTask { it.copy(status = TaskStatus.COMPLETED) }
                     val webCtx = maybeFetchTopicWeb(step.extra).take(450)
-                    val promptNote = "Write a concise, helpful WhatsApp message to ${step.target} about: ${step.extra}.\n$webCtx\nWrite the actual steps/content directly (NO intro like "Sure, here is..."), no quotes, no [TOOL:] tags."
+                    val promptNote = "Write a concise, helpful WhatsApp message to ${step.target} about: ${step.extra}.\n$webCtx\nWrite the actual steps/content directly (NO intro like "Sure, here is..."), include fitting emojis if asked, no quotes, no [TOOL:] tags."
                     runNextStep(extraNote = promptNote)
                     return true to "Thinking of message for ${step.target}..."
                 } else if (_cloudConfig.value.apiKey.isNotBlank()) {
@@ -849,7 +883,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     pendingChoiceContinuation = {
                         viewModelScope.launch(Dispatchers.IO) {
                             var typed: String? = null
-                            for (w in 0 until 5) { typed = svc.typeIntoBottomInput(step.extra); if (typed != null) break; delay(450L) }
+                            for (w in 0 until 5) { typed = svc.typeIntoBottomInput(applyEmojiPhrases(step.extra)); if (typed != null) break; delay(450L) }
                             if (typed != null) appendMessage("Tool", "$typed (Review & tap Send)")
                             else appendMessage("Tool", "Message box not found")
                             _isNavigating.value = false; updateTask { it.copy(status = TaskStatus.COMPLETED) }
@@ -860,7 +894,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (!opened) return false to "Could not find chat for '${step.target}'"
                 var typed: String? = null
                 for (w in 0 until 5) {
-                    typed = svc.typeIntoBottomInput(step.extra)
+                    typed = svc.typeIntoBottomInput(applyEmojiPhrases(step.extra))
                     if (typed != null) break
                     delay(450L)
                 }
@@ -979,6 +1013,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     appendMessage("Assistant", raw)
                 }
                 true to "Summarized ${msgs.size} message(s) from ${step.target}"
+            }
+            TaskAction.SUMMARIZE_PDF -> {
+                if (step.target.isNotBlank()) delay(1600L)
+                val pkg = svc?.observeScreen()?.packageName.orEmpty()
+                val pdfText = if (svc == null || pkg == "com.pocketai.app") svc?.lastExternalScreenText.orEmpty() else svc.readMultiPagePdfText(2000)
+                if (pdfText.length < 40) return false to "Could not read text from this PDF (may be scanned images or still loading)"
+                val prompt = "Summarize this PDF clearly in 4-6 concise bullet points in English:\n${pdfText.take(1400)}"
+                if (_cloudConfig.value.apiKey.isNotBlank()) askCloudForHelp(prompt)
+                else if (isLoaded) { _isNavigating.value = true; activeGoal = "Summarize PDF"; runNextStep(extraNote = prompt) }
+                else appendMessage("Assistant", pdfText.lines().take(8).joinToString("\n"))
+                true to "Summarized PDF"
             }
             TaskAction.ZOOM -> { val r = svc?.pinchZoom(step.target == "in") ?: "Access off"; appendMessage("Tool", r); true to r }
             TaskAction.SCROLL -> { val r = svc?.scroll(step.target) ?: "Access off"; appendMessage("Tool", r); true to r }
