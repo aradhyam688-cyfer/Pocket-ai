@@ -861,7 +861,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             TaskAction.FIND_OPEN_LINK -> {
                 val a = svc ?: return false to "Accessibility off"
-                if (!a.observeScreen().elements.any { it.isEditable && it.bounds.bottom > 1000 }) return false to "Not inside a chat"
+                if (!a.observeScreen(120).elements.any { it.isEditable && it.bounds.bottom > 1000 }) { delay(700L); if (!a.observeScreen(120).elements.any { it.isEditable && it.bounds.bottom > 1000 }) return false to "Not inside a chat" }
                 var links: List<UiElement> = emptyList()
                 for (attempt in 0 until 4) {
                     if (!_isNavigating.value) return false to "Cancelled"
@@ -875,7 +875,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 true to res
             }
             TaskAction.FIND_OPEN_PDF -> {
-                if (!svc!!.observeScreen().elements.any { it.isEditable && it.bounds.bottom > 1000 }) return false to "Not inside a chat"
+                if (!svc!!.observeScreen(120).elements.any { it.isEditable && it.bounds.bottom > 1000 }) { delay(700L); if (!svc.observeScreen(120).elements.any { it.isEditable && it.bounds.bottom > 1000 }) return false to "Not inside a chat" }
                 var pdfs: List<UiElement> = emptyList()
                 for (attempt in 0 until 5) { if (!_isNavigating.value) return false to "Cancelled"; pdfs = svc.findPdfDocuments(); if (pdfs.isNotEmpty()) break; svc.scroll("up"); delay(800L) }
                 if (pdfs.isEmpty()) return false to "No PDF found in this chat"
@@ -989,7 +989,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             svc.getCompressedScreen()
             if (attempt == 0) {
                 val visible = svc.findMatchingElements(query, skipEditable = true)
-                if (visible.size == 1) { appendMessage("Tool", svc.tap(visible.first().id)); delay(900L); return true }
+                if (visible.size == 1) { appendMessage("Tool", svc.tap(visible.first().id)); delay(1200L); return true }
             }
             val inputId = svc.findTopEditableId()
             if (inputId != null) {
