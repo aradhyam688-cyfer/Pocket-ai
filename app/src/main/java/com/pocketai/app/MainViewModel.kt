@@ -871,7 +871,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     pendingMsgPerson = step.target
                     _isNavigating.value = true; updateTask { it.copy(status = TaskStatus.COMPLETED) }
                     val webCtx = maybeFetchTopicWeb(step.extra).take(450)
-                    val promptNote = "Write a concise, helpful WhatsApp message to ${step.target} about: ${step.extra}.\n$webCtx\nWrite the actual steps/content directly (NO intro like "Sure, here is..."), include fitting emojis if asked, no quotes, no [TOOL:] tags."
+                    val promptNote = "Write a concise, helpful WhatsApp message to ${step.target} about: ${step.extra}.\n$webCtx\nWrite the actual steps/content directly (NO intro like 'Sure, here is...'), include fitting emojis if asked, no quotes, no [TOOL:] tags."
                     runNextStep(extraNote = promptNote)
                     return true to "Thinking of message for ${step.target}..."
                 } else if (_cloudConfig.value.apiKey.isNotBlank()) {
