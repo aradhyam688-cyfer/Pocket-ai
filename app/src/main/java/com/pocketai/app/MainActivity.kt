@@ -579,10 +579,7 @@ fun PocketAIScreen(sharedText: String? = null, initialStream: android.net.Uri? =
                 activeTask?.let { t -> if (t.status == TaskStatus.RUNNING || t.status == TaskStatus.PAUSED) append(" • ${t.currentStepIndex + 1}/${t.plan.size}") }
                 voiceStatus?.let { append(" • $it") }
             }
-            var manualToolbar by remember { mutableStateOf<Boolean?>(null) }
-            val isScrolledDown by remember { derivedStateOf { listState.isScrollInProgress && listState.firstVisibleItemIndex > 0 } }
-            val atBottom by remember { derivedStateOf { !listState.canScrollForward } }
-            val showToolbar = manualToolbar ?: (listState.firstVisibleItemIndex == 0 || (!atBottom && !isScrolledDown))
+            var showToolbar by remember { mutableStateOf(true) }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 val dotColor = when {
                     isListening -> Color(0xFFFFB300)
@@ -591,7 +588,7 @@ fun PocketAIScreen(sharedText: String? = null, initialStream: android.net.Uri? =
                 }
                 Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(dotColor))
                 Text(text = header, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-                TextButton(onClick = { manualToolbar = !(manualToolbar ?: showToolbar) }, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)) { Text(if (showToolbar) "▲" else "▼", color = accentColor) }
+                TextButton(onClick = { showToolbar = !showToolbar }, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)) { Text(if (showToolbar) "▲" else "▼", color = accentColor) }
             }
             Spacer(Modifier.height(8.dp))
 
