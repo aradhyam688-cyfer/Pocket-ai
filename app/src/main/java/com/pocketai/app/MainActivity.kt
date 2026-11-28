@@ -115,6 +115,40 @@ private fun formatRichText(raw: String): AnnotatedString {
     }
 }
 
+@Composable
+private fun GlassPillNavBar(activeTab: Int, accentColor: Color, borderColor: Color, onSelect: (Int) -> Unit) {
+    Surface(
+        color = Color(0xD9101016),
+        shape = RoundedCornerShape(32.dp),
+        border = BorderStroke(1.dp, borderColor),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).height(54.dp)
+    ) {
+        Row(modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+            listOf(
+                Triple(0, Icons.Rounded.SmartToy, "Chat"),
+                Triple(1, Icons.Rounded.Build, "Tools"),
+                Triple(2, Icons.Rounded.BarChart, "Stats"),
+                Triple(3, Icons.Rounded.Info, "Updates")
+            ).forEach { (idx, icon, lbl) ->
+                val sel = activeTab == idx
+                Surface(
+                    color = if (sel) accentColor.copy(alpha = 0.18f) else Color.Transparent,
+                    shape = RoundedCornerShape(24.dp),
+                    modifier = Modifier.weight(1f).fillMaxHeight().padding(vertical = 5.dp).clickable { onSelect(idx) }
+                ) {
+                    Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 6.dp)) {
+                        Icon(icon, contentDescription = lbl, tint = if (sel) accentColor else Color(0xFF9C9CA8), modifier = Modifier.size(18.dp))
+                        if (sel) {
+                            Spacer(Modifier.width(4.dp))
+                            Text(lbl, color = accentColor, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PocketAIScreen(sharedText: String? = null, initialStream: android.net.Uri? = null, initialMime: String = "", openPal: Boolean = false, vm: MainViewModel = viewModel()) {
