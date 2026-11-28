@@ -18,7 +18,7 @@ object CloudHelper {
         return try {
             val cleanQ = query
                 .replace(Regex("""(?i)\b(?:please|tell me|can you|provide me|step by step|guide|what is|what are|who is|who was|where is|when is|summari[sz]e|batao|dass|kya hai|ki hai|search|google|look up|on my pc|how to set up|how to make)\b"""), " ")
-                .replace(Regex("""\s+"""), " ").trim().ifBlank { query }
+                .replace(Regex("""(?i)\b(?:on|in|to|for|of|a|an|the|my|your|pc|setup|set|up|make|making|that|can|will|all|and|with|about|them|itself|collecting|create)\b"""), " ").replace(Regex("""\s+"""), " ").trim().split(" ").take(7).joinToString(" ").ifBlank { query }
             fun httpGet(u: String): String = (URL(u).openConnection() as HttpURLConnection).run {
                 requestMethod = "GET"; connectTimeout = 6000; readTimeout = 7000
                 setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36")
