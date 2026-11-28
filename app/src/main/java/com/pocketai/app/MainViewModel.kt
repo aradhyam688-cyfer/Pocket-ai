@@ -634,7 +634,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val prompt = "Give a thorough, structured breakdown of '$cleanTopic' using ONLY these research findings (no generic philosophy):\n$modelSlice"
             if (_cloudConfig.value.apiKey.isNotBlank()) askCloudForHelp(prompt)
             else if (isLoaded) { _isNavigating.value = true; activeGoal = topic; runNextStep(extraNote = prompt) }
-            else appendMessage("Assistant", combined)
+            else appendMessage("Assistant", fullFacts)
         }
     }
 
