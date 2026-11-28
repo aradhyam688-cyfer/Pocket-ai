@@ -132,9 +132,10 @@ private fun GlassPillNavBar(activeTab: Int, accentColor: Color, borderColor: Col
             ).forEach { (idx, icon, lbl) ->
                 val sel = activeTab == idx
                 Surface(
-                    color = if (sel) accentColor.copy(alpha = 0.18f) else Color.Transparent,
+                    color = if (sel) accentColor.copy(alpha = 0.24f) else Color(0x12FFFFFF),
+                    border = if (sel) BorderStroke(1.dp, accentColor.copy(alpha = 0.65f)) else null,
                     shape = RoundedCornerShape(24.dp),
-                    modifier = Modifier.weight(1f).fillMaxHeight().padding(vertical = 5.dp).clickable { onSelect(idx) }
+                    modifier = Modifier.weight(1f).fillMaxHeight().padding(horizontal = 3.dp, vertical = 5.dp).clickable { onSelect(idx) }
                 ) {
                     Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 6.dp)) {
                         Icon(icon, contentDescription = lbl, tint = if (sel) accentColor else Color(0xFF9C9CA8), modifier = Modifier.size(18.dp))
@@ -526,22 +527,12 @@ fun PocketAIScreen(sharedText: String? = null, initialStream: android.net.Uri? =
         Column(modifier = Modifier.fillMaxSize().systemBarsPadding().padding(12.dp)) {
             if (activeTab == 1) {
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) { ToolsManagerTab(vm, accentColor, dynBorder, onPickKbDoc = { kbPicker.launch(arrayOf("*/*")) }, onOpenVision = { showVisionDialog = true }, onSwitchToChat = { activeTab = 0 }) }
-                NavigationBar(containerColor = Color(0xCC0D0D12)) {
-                    NavigationBarItem(selected = false, onClick = { activeTab = 0 }, icon = { Icon(Icons.Rounded.SmartToy, null) }, label = { Text("Chat") })
-                    NavigationBarItem(selected = true, onClick = { activeTab = 1 }, icon = { Icon(Icons.Rounded.Build, null) }, label = { Text("Tools") })
-                    NavigationBarItem(selected = false, onClick = { activeTab = 2 }, icon = { Icon(Icons.Rounded.BarChart, null) }, label = { Text("Stats") })
-                    NavigationBarItem(selected = false, onClick = { activeTab = 3 }, icon = { Icon(Icons.Rounded.Info, null) }, label = { Text("Updates") })
-                }
+                GlassPillNavBar(activeTab = activeTab, accentColor = accentColor, borderColor = dynBorder, onSelect = { activeTab = it })
                 return@Box
             }
             if (activeTab == 2) {
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) { DashboardTab(vm, accentColor, dynBorder) }
-                NavigationBar(containerColor = Color(0xCC0D0D12)) {
-                    NavigationBarItem(selected = false, onClick = { activeTab = 0 }, icon = { Icon(Icons.Rounded.SmartToy, null) }, label = { Text("Chat") })
-                    NavigationBarItem(selected = false, onClick = { activeTab = 1 }, icon = { Icon(Icons.Rounded.Build, null) }, label = { Text("Tools") })
-                    NavigationBarItem(selected = true, onClick = { activeTab = 2 }, icon = { Icon(Icons.Rounded.BarChart, null) }, label = { Text("Stats") })
-                    NavigationBarItem(selected = false, onClick = { activeTab = 3 }, icon = { Icon(Icons.Rounded.Info, null) }, label = { Text("Updates") })
-                }
+                GlassPillNavBar(activeTab = activeTab, accentColor = accentColor, borderColor = dynBorder, onSelect = { activeTab = it })
                 return@Box
             }
             if (activeTab == 3) {
@@ -563,12 +554,7 @@ fun PocketAIScreen(sharedText: String? = null, initialStream: android.net.Uri? =
                         }
                     }
                 }
-                NavigationBar(containerColor = Color(0xCC0D0D12)) {
-                    NavigationBarItem(selected = false, onClick = { activeTab = 0 }, icon = { Icon(Icons.Rounded.SmartToy, null) }, label = { Text("Chat") })
-                    NavigationBarItem(selected = false, onClick = { activeTab = 1 }, icon = { Icon(Icons.Rounded.Build, null) }, label = { Text("Tools") })
-                    NavigationBarItem(selected = false, onClick = { activeTab = 2 }, icon = { Icon(Icons.Rounded.BarChart, null) }, label = { Text("Stats") })
-                    NavigationBarItem(selected = true, onClick = { activeTab = 3 }, icon = { Icon(Icons.Rounded.Info, null) }, label = { Text("Updates") })
-                }
+                GlassPillNavBar(activeTab = activeTab, accentColor = accentColor, borderColor = dynBorder, onSelect = { activeTab = it })
                 return@Box
             }
             val header = buildString {
@@ -657,12 +643,7 @@ fun PocketAIScreen(sharedText: String? = null, initialStream: android.net.Uri? =
                 FilledIconButton(enabled = !isGenerating && !isNavigating, onClick = { vm.sendMessage(input); input = "" }) { Icon(Icons.Rounded.Send, contentDescription = "Send") }
             }
             Spacer(Modifier.height(4.dp))
-            NavigationBar(containerColor = Color(0xCC0D0D12)) {
-                NavigationBarItem(selected = true, onClick = { activeTab = 0 }, icon = { Icon(Icons.Rounded.SmartToy, null) }, label = { Text("Chat") })
-                NavigationBarItem(selected = false, onClick = { activeTab = 1 }, icon = { Icon(Icons.Rounded.Build, null) }, label = { Text("Tools") })
-                NavigationBarItem(selected = false, onClick = { activeTab = 2 }, icon = { Icon(Icons.Rounded.BarChart, null) }, label = { Text("Stats") })
-                NavigationBarItem(selected = false, onClick = { activeTab = 3 }, icon = { Icon(Icons.Rounded.Info, null) }, label = { Text("Updates") })
-            }
+            GlassPillNavBar(activeTab = activeTab, accentColor = accentColor, borderColor = dynBorder, onSelect = { activeTab = it })
         }
     }
 }
