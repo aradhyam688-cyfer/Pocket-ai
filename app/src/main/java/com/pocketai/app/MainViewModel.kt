@@ -607,6 +607,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun togglePlugin(p: PluginEntity) { viewModelScope.launch(Dispatchers.IO) { pluginDao.update(p.copy(enabled = !p.enabled)); refreshAnalyticsAndKb() } }
     fun deletePlugin(p: PluginEntity) { viewModelScope.launch(Dispatchers.IO) { pluginDao.delete(p); refreshAnalyticsAndKb() } }
 
+    private suspend fun planSearchQueries(topic: String, fallback: List<String>): List<String> {
+        val qPrompt = "Output ONLY 3 short, specific web search queries (one per line, no numbers, no bullets, no quotes) to thoroughly research: $topic"
+        val raw = if (_cloudConfig.value.apiKey.isNotBlank() && !_offlineOnly.value) {
+            val cfg = _cloudConfig.value
+            runCatching { CloudHelper.ask(cfg.provider, cfg.apiKey, cfg.model, qPrompt) }.getOrDefault("")
+        } else if (isLoaded) {
+            val buf = StringBuilder()
+            val colJob = viewModelScope.launch(Dispatchers.IO) {
+                _llmFlow.collect { ev -> if (ev is LlamaHelper.LLMEvent.Ongoing) buf.append(ev.word) }
+            }
+            runCatching {
+                llamaHelper.stopPrediction(); delay(120L)
+                llamaHelper.predict("<|im_start|>user\n$qPrompt<|im_end|>\n<|im_start|>assistant\n")
+                var waited = 0L
+                while (waited < 12000L) { delay(150L); waited += 150L; if (!_isGenerating.value && buf.isNotEmpty()) break }
+            }
+            colJob.cancel()
+            buf.toString()
+        } else ""
+        val parsed = raw.lines()
+            .map { it.replace(Regex("""^[\d.\-*•)\s"']+"""), "").replace(""", "").trim() }
+            .filter { it.length in 5..85 && !it.contains("[TOOL:") }
+            .distinct().take(3)
+        return if (parsed.isNotEmpty()) parsed else fallback
+    }
+
     fun runResearch(topic: String) {
         if (topic.isBlank()) return
         if (_offlineOnly.value || !isOnline()) {
@@ -619,7 +645,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             appendMessage("Tool", "Researching '$topic' at device-safe pace...")
             val cleanTopic = topic.replace(Regex("""(?i)\b(?:on|how|to|setup|set|up|an|a|the|my|pc|that|can|make|making|all|and|for|itself|them|provide|me|about|collecting|create|handles|tasks|task)\b"""), " ").replace(Regex("""\s+"""), " ").trim().split(" ").take(12).joinToString(" ").ifBlank { topic }
             val isDeep = cleanTopic.split(Regex("""\s+""")).size >= 5 || Regex("""(?i)\b(?:pipeline|architecture|how to|guide|vs|compare|deep|explain|workflow|system)\b""").containsMatchIn(cleanTopic)
-            val queries = if (isDeep) listOf(cleanTopic, "$cleanTopic workflow steps", "$cleanTopic best tools", "$cleanTopic challenges tips") else listOf(cleanTopic, "$cleanTopic key facts")
+            val defaultQueries = if (isDeep) listOf(cleanTopic, "$cleanTopic workflow steps", "$cleanTopic best tools") else listOf(cleanTopic, "$cleanTopic key facts")
+            val queries = planSearchQueries(topic, defaultQueries)
+            appendMessage("Tool", "Searching web for:\n- ${queries.joinToString("\n- ")}")
             val gathered = linkedSetOf<String>()
             for (q in queries) {
                 checkThermalBatterySafe()?.let { w -> _isGenerating.value = false; appendMessage("Tool", w); return@launch }
