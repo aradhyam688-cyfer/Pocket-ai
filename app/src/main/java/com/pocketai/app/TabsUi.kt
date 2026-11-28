@@ -52,7 +52,19 @@ fun DashboardTab(vm: MainViewModel, accentColor: Color, dynBorder: Color) {
                 if (cloudN > 0 && topCloud != null) Text("Most used Cloud: ${topCloud.first} (${topCloud.second})", style = MaterialTheme.typography.bodySmall, color = Color.White)
             }
         }
-        OutlinedButton(onClick = { vm.clearUsageStats() }, modifier = Modifier.fillMaxWidth()) { Text("Reset Analytics") }
+                OutlinedButton(onClick = { vm.clearUsageStats() }, modifier = Modifier.fillMaxWidth()) { Text("Reset Analytics") }
+        val ctx = LocalContext.current
+        val crashPrefs = remember { ctx.getSharedPreferences("pocketai_crash", android.content.Context.MODE_PRIVATE) }
+        var crashText by remember { mutableStateOf(crashPrefs.getString("last_crash", "") ?: "") }
+        Surface(color = Color(0x1AFFFFFF), shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, dynBorder), modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("Crash Log", style = MaterialTheme.typography.titleMedium, color = accentColor)
+                    if (crashText.isNotBlank()) TextButton(onClick = { crashPrefs.edit().remove("last_crash").apply(); crashText = "" }) { Text("Clear") }
+                }
+                Text(if (crashText.isBlank()) "No crashes recorded." else crashText.take(700), style = MaterialTheme.typography.bodySmall, color = Color(0xFFB5B5C2))
+            }
+        }
     }
 }
 

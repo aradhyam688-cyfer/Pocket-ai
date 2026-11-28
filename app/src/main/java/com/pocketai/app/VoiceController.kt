@@ -143,7 +143,7 @@ class VoiceController(
 
     fun speak(rawText: String) {
         if (!ttsReady) return
-        val clean = rawText.replace(Regex("""\[TOOL:[^\]]+\]"""), "").trim()
+        val clean = rawText.replace(Regex("""\[TOOL:[^\]]+\]"""), "").replace("—", ", ").replace("...", ", ").trim()
         if (clean.isEmpty()) return
         stopSpeaking()
         if (metallicMode) {
@@ -161,17 +161,21 @@ class VoiceController(
                 val sr = ByteBuffer.wrap(bytes, 24, 4).order(ByteOrder.LITTLE_ENDIAN).int.coerceIn(8000, 48000)
                 val n = (bytes.size - 44) / 2; val src = ShortArray(n)
                 ByteBuffer.wrap(bytes, 44, n * 2).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(src)
-                val d1 = (sr * 0.0045f).toInt().coerceAtLeast(1); val d2 = (sr * 0.0073f).toInt().coerceAtLeast(2)
-                val buf = FloatArray(n); val out = ShortArray(n); var prev = 0f
+                val d1 = (sr * 0.0042f).toInt().coerceAtLeast(1); val d2 = (sr * 0.0071f).toInt().coerceAtLeast(2)
+                val buf = FloatArray(n); val out = ShortArray(n)
+                var lp = 0f; var prev = 0f
+                val alphaLp = (2.0 * Math.PI * 240.0 / sr).toFloat().coerceIn(0.01f, 0.4f)
                 for (i in 0 until n) {
                     var y = src[i] / 32768f
-                    if (i >= d1) y += buf[i - d1] * 0.34f
-                    if (i >= d2) y -= buf[i - d2] * 0.24f
+                    if (i >= d1) y += buf[i - d1] * 0.32f
+                    if (i >= d2) y -= buf[i - d2] * 0.22f
                     buf[i] = y.coerceIn(-1.2f, 1.2f)
-                    val ring = sin(2.0 * Math.PI * 85.0 * i / sr).toFloat()
-                    val mod = y * (0.88f + 0.12f * ring)
-                    val crisp = mod - 0.18f * prev; prev = mod
-                    val sat = tanh((crisp * 1.25f).toDouble()).toFloat()
+                    lp += alphaLp * (y - lp)
+                    val chest = y + lp * 0.35f
+                    val ring = sin(2.0 * Math.PI * 82.0 * i / sr).toFloat()
+                    val mod = chest * (0.89f + 0.11f * ring)
+                    val crisp = mod - 0.22f * prev; prev = mod
+                    val sat = tanh((crisp * 1.35f).toDouble()).toFloat()
                     out[i] = (sat * 32767f).toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
                 }
                 val track = AudioTrack.Builder()

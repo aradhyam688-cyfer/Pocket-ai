@@ -149,6 +149,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _toolToggles = MutableStateFlow(loadToolToggles())
     val toolToggles = _toolToggles.asStateFlow()
     private var genStartMs = 0L
+    private var lastUiTokenMs = 0L
+    private val tokenBuf = StringBuilder()
     private var lastSentPrompt = ""
     private var lastModelName = "" 
     val voiceConfig = _voiceConfig.asStateFlow()
@@ -208,16 +210,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _llmFlow.collect { event ->
                 when (event) {
                     is LlamaHelper.LLMEvent.Ongoing -> {
-                        val list = _messages.value.toMutableList()
-                        val last = list.lastOrNull()
-                        if (last != null && last.role == "Assistant") {
-                            list[list.lastIndex] = last.copy(text = last.text + event.word)
-                            _messages.value = list
+                        synchronized(tokenBuf) { tokenBuf.append(event.word) }
+                        val now = System.currentTimeMillis()
+                        if (now - lastUiTokenMs >= 65L) {
+                            lastUiTokenMs = now
+                            val chunk = synchronized(tokenBuf) { val t = tokenBuf.toString(); tokenBuf.setLength(0); t }
+                            if (chunk.isNotEmpty()) {
+                                val list = _messages.value.toMutableList()
+                                val last = list.lastOrNull()
+                                if (last != null && last.role == "Assistant") {
+                                    list[list.lastIndex] = last.copy(text = last.text + chunk)
+                                    _messages.value = list
+                                }
+                            }
                         }
                     }
                     is LlamaHelper.LLMEvent.Done -> {
+                        val rem = synchronized(tokenBuf) { val t = tokenBuf.toString(); tokenBuf.setLength(0); t }
+                        if (rem.isNotEmpty()) {
+                            val list = _messages.value.toMutableList()
+                            val last = list.lastOrNull()
+                            if (last != null && last.role == "Assistant") { list[list.lastIndex] = last.copy(text = last.text + rem); _messages.value = list }
+                        }
                         _isGenerating.value = false
                         var reply = _messages.value.lastOrNull()?.text.orEmpty()
+                        val isAnalytic = Regex("""(?i)\b(?:solve|summari[sz]e|research|explain|calculate|derive|analy[sz]e)\b""").containsMatchIn(activeGoal)
+                        if (isAnalytic && reply.length < 15 && _cloudConfig.value.apiKey.isNotBlank() && !_offlineOnly.value) {
+                            pendingMsgPerson = null; _isNavigating.value = false
+                            askCloudForHelp(activeGoal); return@collect
+                        }
                         if (reply.isBlank()) {
                             pendingMsgPerson = null; _isNavigating.value = false
                             reply = "(No output — try increasing n_ctx in Model Parameters or turning Web off)"
@@ -586,6 +607,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun togglePlugin(p: PluginEntity) { viewModelScope.launch(Dispatchers.IO) { pluginDao.update(p.copy(enabled = !p.enabled)); refreshAnalyticsAndKb() } }
     fun deletePlugin(p: PluginEntity) { viewModelScope.launch(Dispatchers.IO) { pluginDao.delete(p); refreshAnalyticsAndKb() } }
 
+    fun runResearch(topic: String) {
+        if (topic.isBlank()) return
+        if (_offlineOnly.value || !isOnline()) {
+            if (isLoaded) { _isNavigating.value = true; activeGoal = topic; runNextStep(extraNote = "Research & explain '$topic' clearly using offline knowledge.") }
+            else appendMessage("Assistant", "Offline: load a GGUF model or go online to run /research.")
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            appendMessage("Tool", "Researching '$topic' at device-safe pace...")
+            val gathered = mutableListOf<String>()
+            for (q in listOf(topic, "$topic overview facts")) {
+                checkThermalBatterySafe()?.let { w -> appendMessage("Tool", w); return@launch }
+                val res = CloudHelper.fetchWebText(q)
+                if (res.isNotBlank()) gathered.add(res)
+                delay(650L)
+            }
+            val combined = gathered.joinToString("\n").take(900)
+            if (combined.isBlank()) { appendMessage("Assistant", "No web research results found for '$topic'."); return@launch }
+            val prompt = "Summarize these research findings on '$topic' clearly with bullet points:\n$combined"
+            if (_cloudConfig.value.apiKey.isNotBlank()) askCloudForHelp(prompt)
+            else if (isLoaded) { _isNavigating.value = true; activeGoal = topic; runNextStep(extraNote = prompt) }
+            else appendMessage("Assistant", combined)
+        }
+    }
+
     fun clearChat() {
         _messages.value = emptyList()
         viewModelScope.launch(Dispatchers.IO) { messageDao.clearAll() }
@@ -654,7 +700,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (Regex("""(?i)\b(?:set|start)\s+(?:a\s+)?timer\b""").containsMatchIn(lowerAll)) {
             return listOf(PlannedStep(TaskAction.SET_TIMER, target = input))
         }
-        if (Regex("""(?i)^(?:write\s+(?:an?\s+)?)?(?:e?mail|send\s+e?mail)\b""").containsMatchIn(lowerAll)) {
+        if (Regex("""(?i)^(?:think\s+and\s+|write\s+(?:an?\s+)?)?(?:e?mail|send\s+e?mail)\b""").containsMatchIn(lowerAll)) {
             val toAddr = Regex("""[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}""").find(input)?.value ?: ""
             val subjMatch = Regex("""(?i)\bsubject\s+(.+?)(?=\s+\bbody\b|$)""").find(input)
             val bodyMatch = Regex("""(?i)\bbody\s+(.+)$""").find(input)
@@ -804,7 +850,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 |• Device: ${_ramTemp.value}
                 |
                 |[Commands]
-                |• /help, /remember <fact>, /cloud <question>
+                |• /help, /remember <fact>, /cloud <question>, /research <topic>
+                |• Email: "write an email to x@y.com about <topic>" / "think and email x@y.com about <topic>"
+                |• Notifications: "summarise notifications"
                 |• "call mamma" (asks WhatsApp or Phone)
                 |• "think and message bhaiya on <topic>"
                 |• "summarise the latest message mamma sent" / "summarise the latest pdf rahul sent"
@@ -868,6 +916,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 return
             }
         }
+        if (trimmed.startsWith("/research ", ignoreCase = true)) { val rq = trimmed.removePrefix("/research ").trim(); appendMessage("You", trimmed); runResearch(rq); return }
         if (!isLoaded) {
             if (_cloudConfig.value.apiKey.isNotBlank()) askCloudForHelp(trimmed)
             else appendMessage("Tool", "Load a .gguf model or set a Cloud API key first.")
@@ -985,6 +1034,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun runBenchmark() {
+        if (trimmed.startsWith("/research ", ignoreCase = true)) { val rq = trimmed.removePrefix("/research ").trim(); appendMessage("You", trimmed); runResearch(rq); return }
         if (!isLoaded) { appendMessage("Tool", "Load a GGUF model first to benchmark."); return }
         viewModelScope.launch(Dispatchers.IO) {
             val t0 = System.currentTimeMillis()
@@ -1382,7 +1432,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     return false
                 }
                 svc.findAndTapByText(query, skipEditable = true)?.let { appendMessage("Tool", it); delay(900L); return true }
-            } else { if (svc.findAndTapByText("search") != null || svc.findAndTapByText("ask meta ai") != null) delay(800L) else delay(500L) }
+            } else { if (svc.findAndTapByText("search") != null || svc.findAndTapByText("ask meta ai") != null) delay(800L) else { svc.findAndTapByText("chats") ?: svc.scroll("up"); delay(700L) } }
         }
         return false
     }
@@ -1505,7 +1555,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val kbBlock = if (kbChunks.isNotEmpty()) "\nLocal knowledge:\n" + kbChunks.joinToString("\n") { "[${it.docName}] ${it.content}" } else ""
         val factsBlock = (if (cachedFacts.isNotEmpty()) "\nKnown user facts:\n" + cachedFacts.joinToString("\n") { "- $it" } else "") + kbBlock
         val baseSys = _modelConfig.value.systemPrompt.ifBlank { "You are Ultron, a cold, calculating, hyper-intelligent synthetic AI—eloquent, imperious, darkly witty. Understand English, Hindi, Punjabi, and Hinglish, and ALWAYS reply in English. Give balanced, 3 to 5 sentence replies when conversing." }
-        val isPureText = extraNote?.startsWith("Write a concise") == true || extraNote?.startsWith("Summarize") == true
+        val isPureText = extraNote?.startsWith("Write a concise") == true || extraNote?.startsWith("Summarize") == true || _activeProfile.value in listOf("Study Tutor", "Coder") || (_fastAuto.value && extraNote == null)
         val toolsBlock = if (isPureText) "" else "\nAvailable tools (emit exact tag only when needed):\n[TOOL: open_app|package=<pkg>]\n[TOOL: tap|id=<number>]\n[TOOL: type_text|id=<number>|text=<value>]\n[TOOL: scroll|direction=<up|down|left|right>]\n[TOOL: back]\n[TOOL: read_screen]\n[TOOL: save_memory|fact=<text>]$factsBlock$screenBlock"
         val sysFull = "$baseSys$toolsBlock"
         val tpl = when (_modelConfig.value.chatTemplate) {

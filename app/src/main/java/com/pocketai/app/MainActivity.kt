@@ -30,6 +30,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -89,6 +94,26 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private fun formatRichText(raw: String): AnnotatedString {
+    var t = raw
+        .replace("\\[", "").replace("\\]", "")
+        .replace("\\(", "").replace("\\)", "")
+        .replace("\\gamma", "γ").replace("\\sigma", "σ").replace("\\theta", "θ")
+        .replace("\\alpha", "α").replace("\\beta", "β").replace("\\pi", "π")
+        .replace("\\Delta", "Δ").replace("\\lambda", "λ").replace("\\omega", "ω").replace("\\mu", "μ")
+        .replace("\\times", "×").replace("\\cdot", "·").replace("\\leq", "≤").replace("\\geq", "≥")
+        .replace("\\neq", "≠").replace("\\approx", "≈").replace("\\sqrt", "√")
+        .replace("\\cos", "cos").replace("\\sin", "sin").replace("\\tan", "tan")
+    t = Regex("""\\frac\{([^}]+)\}\{([^}]+)\}""").replace(t) { "(${it.groupValues[1]}/${it.groupValues[2]})" }
+    val parts = t.split("**")
+    return buildAnnotatedString {
+        parts.forEachIndexed { idx, part ->
+            if (idx % 2 == 1) withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(part) }
+            else append(part)
+        }
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PocketAIScreen(sharedText: String? = null, initialStream: android.net.Uri? = null, initialMime: String = "", openPal: Boolean = false, vm: MainViewModel = viewModel()) {
@@ -141,7 +166,7 @@ fun PocketAIScreen(sharedText: String? = null, initialStream: android.net.Uri? =
     val listState = rememberLazyListState()
 
     LaunchedEffect(messages.size, messages.lastOrNull()?.text?.length) {
-        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
+        if (messages.isNotEmpty()) runCatching { listState.scrollToItem(messages.lastIndex) }
     }
 
     val voice = remember {
@@ -498,7 +523,7 @@ fun PocketAIScreen(sharedText: String? = null, initialStream: android.net.Uri? =
                     Surface(color = GlassFill, shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, dynBorder), modifier = Modifier.fillMaxWidth()) {
                         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text("Changelog", style = MaterialTheme.typography.titleMedium, color = accentColor)
-                            Text("v3.0 — Dashboard, Tools/Plugins, Vision, OCR & Profiles", color = Color.White)
+                            Text("v3.1 — Ultron EQ, Rich Math/Markdown, /research, Crash Log & Safe Streaming", color = Color.White)
                             Text("• Offloaded Accessibility scans off main thread + added Ultra-Light/Balanced/Max presets\n• Upgraded Ultron metallic DSP voice + persistent settings\n• Added Mix (Hinglish + Punjabi + Hindi) voice & script normalizer\n• Added Call <contact> (WhatsApp or Phone), date-aware WhatsApp links, and incoming message summarizer\n• Added Live Web Facts, categorized /help, Auto Chat-Templates & Theme Colors\n• Added PDF Summary (on-screen & WhatsApp), online/offline topic summarise, & emoji typing", style = MaterialTheme.typography.bodySmall, color = Color(0xFFB5B5C2))
                         }
                     }
@@ -572,7 +597,7 @@ fun PocketAIScreen(sharedText: String? = null, initialStream: android.net.Uri? =
                                 Column(modifier = Modifier.padding(12.dp)) {
                                     Text(msg.role, style = MaterialTheme.typography.labelSmall, color = accentColor)
                                     Spacer(Modifier.height(2.dp))
-                                    Text(if (msg.text.isBlank() && isGenerating) "Processing..." else msg.text, color = if (msg.text.isBlank()) accentColor.copy(alpha = 0.85f) else Color(0xFFF0F0F5))
+                                    Text(if (msg.text.isBlank() && isGenerating) AnnotatedString("Processing...") else formatRichText(msg.text), color = if (msg.text.isBlank()) accentColor.copy(alpha = 0.85f) else Color(0xFFF0F0F5))
                                 }
                             }
                         }
