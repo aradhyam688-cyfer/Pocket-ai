@@ -614,6 +614,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             else appendMessage("Assistant", "Offline: load a GGUF model or go online to run /research.")
             return
         }
+        _isGenerating.value = true
         viewModelScope.launch(Dispatchers.IO) {
             appendMessage("Tool", "Researching '$topic' at device-safe pace...")
             val gathered = mutableListOf<String>()
@@ -623,8 +624,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (res.isNotBlank()) gathered.add(res)
                 delay(650L)
             }
-            val combined = gathered.joinToString("\n").take(900)
-            if (combined.isBlank()) { appendMessage("Assistant", "No web research results found for '$topic'."); return@launch }
+            val combined = gathered.joinToString("\n").take(550)
+            if (combined.isBlank()) { _isGenerating.value = false; appendMessage("Assistant", "No web research results found for '$topic'."); return@launch }
             val prompt = "Summarize these research findings on '$topic' clearly with bullet points:\n$combined"
             if (_cloudConfig.value.apiKey.isNotBlank()) askCloudForHelp(prompt)
             else if (isLoaded) { _isNavigating.value = true; activeGoal = topic; runNextStep(extraNote = prompt) }
@@ -1588,6 +1589,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         lastSentPrompt = sb.toString(); genStartMs = System.currentTimeMillis()
-        viewModelScope.launch(Dispatchers.IO) { runCatching { llamaHelper.predict(lastSentPrompt) }.onFailure { _isGenerating.value = false; _isNavigating.value = false } }
+        viewModelScope.launch(Dispatchers.IO) { runCatching { llamaHelper.stopPrediction(); delay(120L); llamaHelper.predict(lastSentPrompt) }.onFailure { _isGenerating.value = false; _isNavigating.value = false } }
     }
 }
