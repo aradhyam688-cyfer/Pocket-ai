@@ -1562,7 +1562,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val kbBlock = if (kbChunks.isNotEmpty()) "\nLocal knowledge:\n" + kbChunks.joinToString("\n") { "[${it.docName}] ${it.content}" } else ""
         val factsBlock = (if (cachedFacts.isNotEmpty()) "\nKnown user facts:\n" + cachedFacts.joinToString("\n") { "- $it" } else "") + kbBlock
         val baseSys = _modelConfig.value.systemPrompt.ifBlank { "You are Ultron, a cold, calculating, hyper-intelligent synthetic AI—eloquent, imperious, darkly witty. Understand English, Hindi, Punjabi, and Hinglish, and ALWAYS reply in English. Give balanced, 3 to 5 sentence replies when conversing." }
-        val isPureText = extraNote?.startsWith("Write a concise") == true || extraNote?.startsWith("Summarize") == true || _activeProfile.value in listOf("Study Tutor", "Coder") || (_fastAuto.value && extraNote == null)
+        val isPureText = (extraNote != null && !extraNote.startsWith("Previous tool result:")) || _activeProfile.value in listOf("Study Tutor", "Coder") || _fastAuto.value
         val toolsBlock = if (isPureText) "" else "\nAvailable tools (emit exact tag only when needed):\n[TOOL: open_app|package=<pkg>]\n[TOOL: tap|id=<number>]\n[TOOL: type_text|id=<number>|text=<value>]\n[TOOL: scroll|direction=<up|down|left|right>]\n[TOOL: back]\n[TOOL: read_screen]\n[TOOL: save_memory|fact=<text>]$factsBlock$screenBlock"
         val sysFull = "$baseSys$toolsBlock"
         val tpl = when (_modelConfig.value.chatTemplate) {
