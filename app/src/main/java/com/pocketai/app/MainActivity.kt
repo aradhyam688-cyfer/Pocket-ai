@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.animation.*
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -544,17 +545,23 @@ fun PocketAIScreen(sharedText: String? = null, initialStream: android.net.Uri? =
                 activeTask?.let { t -> if (t.status == TaskStatus.RUNNING || t.status == TaskStatus.PAUSED) append(" • ${t.currentStepIndex + 1}/${t.plan.size}") }
                 voiceStatus?.let { append(" • $it") }
             }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            var manualToolbar by remember { mutableStateOf<Boolean?>(null) }
+            val isScrolledDown by remember { derivedStateOf { listState.isScrollInProgress && listState.firstVisibleItemIndex > 0 } }
+            val atBottom by remember { derivedStateOf { !listState.canScrollForward } }
+            val showToolbar = manualToolbar ?: (listState.firstVisibleItemIndex == 0 || (!atBottom && !isScrolledDown))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 val dotColor = when {
                     isListening -> Color(0xFFFFB300)
                     status.startsWith("Ready") -> accentColor
                     else -> Color(0xFFFF5252)
                 }
                 Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(dotColor))
-                Text(text = header, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(text = header, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                TextButton(onClick = { manualToolbar = !(manualToolbar ?: showToolbar) }, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)) { Text(if (showToolbar) "▲" else "▼", color = accentColor) }
             }
             Spacer(Modifier.height(8.dp))
 
+            AnimatedVisibility(visible = showToolbar, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 FilledTonalIconButton(colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = GlassFill, contentColor = Color.White), modifier = Modifier.border(1.dp, dynBorder, CircleShape), onClick = { showModelsDialog = true }) { Icon(Icons.Rounded.Memory, contentDescription = "Models") }
                 FilledTonalIconButton(colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = GlassFill, contentColor = Color.White), modifier = Modifier.border(1.dp, dynBorder, CircleShape), onClick = { showCloudDialog = true }) { Icon(Icons.Rounded.Cloud, contentDescription = "API") }
@@ -576,7 +583,8 @@ fun PocketAIScreen(sharedText: String? = null, initialStream: android.net.Uri? =
                     FilledIconButton(onClick = { voice.stopSpeaking(); vm.stopNavigation() }, colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.error)) { Icon(Icons.Rounded.Stop, contentDescription = "Stop") }
                 }
             }
-            Spacer(Modifier.height(8.dp))
+            }
+            Spacer(Modifier.height(6.dp))
 
             LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(messages) { msg ->

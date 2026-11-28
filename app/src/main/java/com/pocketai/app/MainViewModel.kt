@@ -617,16 +617,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _isGenerating.value = true
         viewModelScope.launch(Dispatchers.IO) {
             appendMessage("Tool", "Researching '$topic' at device-safe pace...")
-            val gathered = mutableListOf<String>()
-            for (q in listOf(topic, "$topic overview facts")) {
-                checkThermalBatterySafe()?.let { w -> appendMessage("Tool", w); return@launch }
+            val cleanTopic = topic.replaceFirst(Regex("""(?i)^(?:on|about|for)\s+"""), "").trim()
+            val isDeep = cleanTopic.split(Regex("""\s+""")).size >= 5 || Regex("""(?i)\b(?:pipeline|architecture|how to|guide|vs|compare|deep|explain|workflow|system)\b""").containsMatchIn(cleanTopic)
+            val queries = if (isDeep) listOf(cleanTopic, "$cleanTopic workflow steps", "$cleanTopic best tools", "$cleanTopic challenges tips") else listOf(cleanTopic, "$cleanTopic key facts")
+            val gathered = linkedSetOf<String>()
+            for (q in queries) {
+                checkThermalBatterySafe()?.let { w -> _isGenerating.value = false; appendMessage("Tool", w); return@launch }
                 val res = CloudHelper.fetchWebText(q)
-                if (res.isNotBlank()) gathered.add(res)
+                res.lines().map { it.trim() }.filter { it.length > 15 }.forEach { gathered.add(it) }
                 delay(650L)
             }
-            val combined = gathered.joinToString("\n").take(550)
-            if (combined.isBlank()) { _isGenerating.value = false; appendMessage("Assistant", "No web research results found for '$topic'."); return@launch }
-            val prompt = "Summarize these research findings on '$topic' clearly with bullet points:\n$combined"
+            val fullFacts = gathered.joinToString("\n").take(if (isDeep) 1800 else 1000)
+            if (fullFacts.isBlank()) { _isGenerating.value = false; appendMessage("Assistant", "No web research results found for '$cleanTopic'."); return@launch }
+            appendMessage("Tool", "Research (${gathered.size} findings):\n$fullFacts")
+            val modelSlice = if (_cloudConfig.value.apiKey.isNotBlank()) fullFacts else fullFacts.take(650)
+            val prompt = "Give a thorough, structured breakdown of '$cleanTopic' using ONLY these research findings (no generic philosophy):\n$modelSlice"
             if (_cloudConfig.value.apiKey.isNotBlank()) askCloudForHelp(prompt)
             else if (isLoaded) { _isNavigating.value = true; activeGoal = topic; runNextStep(extraNote = prompt) }
             else appendMessage("Assistant", combined)
