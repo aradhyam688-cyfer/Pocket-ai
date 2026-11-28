@@ -878,6 +878,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val fact = trimmed.removePrefix("/remember ").trim()
             saveFact(fact); appendMessage("You", trimmed); appendMessage("Tool", "Remembered: $fact"); return
         }
+        if (trimmed.startsWith("/research ", ignoreCase = true)) { val rq = trimmed.removePrefix("/research ").trim(); appendMessage("You", trimmed); runResearch(rq); return }
         if (trimmed.startsWith("/cloud ", ignoreCase = true) || trimmed.startsWith("ask online ", ignoreCase = true)) {
             val q = trimmed.replaceFirst(Regex("""(?i)^(?:/cloud|ask online)\s+"""), "").trim()
             appendMessage("You", trimmed); askCloudForHelp(q); return
@@ -916,7 +917,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 return
             }
         }
-        if (trimmed.startsWith("/research ", ignoreCase = true)) { val rq = trimmed.removePrefix("/research ").trim(); appendMessage("You", trimmed); runResearch(rq); return }
         if (!isLoaded) {
             if (_cloudConfig.value.apiKey.isNotBlank()) askCloudForHelp(trimmed)
             else appendMessage("Tool", "Load a .gguf model or set a Cloud API key first.")
