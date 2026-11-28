@@ -627,7 +627,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             buf.toString()
         } else ""
         val parsed = raw.lines()
-            .map { it.replace(Regex("""^[\d.\-*•)\s"']+"""), "").replace(""", "").trim() }
+            .map { it.replace(Regex("""^[\d.\-*•)\s"']+"""), "").replace("\u0022", "").trim() }
             .filter { it.length in 5..85 && !it.contains("[TOOL:") }
             .distinct().take(3)
         return if (parsed.isNotEmpty()) parsed else fallback
