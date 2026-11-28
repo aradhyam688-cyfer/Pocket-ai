@@ -879,6 +879,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             saveFact(fact); appendMessage("You", trimmed); appendMessage("Tool", "Remembered: $fact"); return
         }
         if (trimmed.startsWith("/research ", ignoreCase = true)) { val rq = trimmed.removePrefix("/research ").trim(); appendMessage("You", trimmed); runResearch(rq); return }
+        if (trimmed.startsWith("/research ", ignoreCase = true)) { val rq = trimmed.removePrefix("/research ").trim(); appendMessage("You", trimmed); runResearch(rq); return }
         if (trimmed.startsWith("/cloud ", ignoreCase = true) || trimmed.startsWith("ask online ", ignoreCase = true)) {
             val q = trimmed.replaceFirst(Regex("""(?i)^(?:/cloud|ask online)\s+"""), "").trim()
             appendMessage("You", trimmed); askCloudForHelp(q); return
@@ -1034,7 +1035,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun runBenchmark() {
-        if (trimmed.startsWith("/research ", ignoreCase = true)) { val rq = trimmed.removePrefix("/research ").trim(); appendMessage("You", trimmed); runResearch(rq); return }
         if (!isLoaded) { appendMessage("Tool", "Load a GGUF model first to benchmark."); return }
         viewModelScope.launch(Dispatchers.IO) {
             val t0 = System.currentTimeMillis()
