@@ -617,7 +617,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _isGenerating.value = true
         viewModelScope.launch(Dispatchers.IO) {
             appendMessage("Tool", "Researching '$topic' at device-safe pace...")
-            val cleanTopic = topic.replace(Regex("""(?i)\b(?:on|how|to|setup|set|up|an|a|the|my|pc|that|can|make|making|all|and|for|itself|them|provide|me|about|collecting|create)\b"""), " ").replace(Regex("""\s+"""), " ").trim().split(" ").take(7).joinToString(" ").ifBlank { topic }
+            val cleanTopic = topic.replace(Regex("""(?i)\b(?:on|how|to|setup|set|up|an|a|the|my|pc|that|can|make|making|all|and|for|itself|them|provide|me|about|collecting|create|handles|tasks|task)\b"""), " ").replace(Regex("""\s+"""), " ").trim().split(" ").take(12).joinToString(" ").ifBlank { topic }
             val isDeep = cleanTopic.split(Regex("""\s+""")).size >= 5 || Regex("""(?i)\b(?:pipeline|architecture|how to|guide|vs|compare|deep|explain|workflow|system)\b""").containsMatchIn(cleanTopic)
             val queries = if (isDeep) listOf(cleanTopic, "$cleanTopic workflow steps", "$cleanTopic best tools", "$cleanTopic challenges tips") else listOf(cleanTopic, "$cleanTopic key facts")
             val gathered = linkedSetOf<String>()

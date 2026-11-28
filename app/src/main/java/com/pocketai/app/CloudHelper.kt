@@ -18,13 +18,19 @@ object CloudHelper {
         return try {
             val cleanQ = query
                 .replace(Regex("""(?i)\b(?:please|tell me|can you|provide me|step by step|guide|what is|what are|who is|who was|where is|when is|summari[sz]e|batao|dass|kya hai|ki hai|search|google|look up|on my pc|how to set up|how to make)\b"""), " ")
-                .replace(Regex("""(?i)\b(?:on|in|to|for|of|a|an|the|my|your|pc|setup|set|up|make|making|that|can|will|all|and|with|about|them|itself|collecting|create)\b"""), " ").replace(Regex("""\s+"""), " ").trim().split(" ").take(7).joinToString(" ").ifBlank { query }
+                .replace(Regex("""(?i)\b(?:on|in|to|for|of|a|an|the|my|your|pc|setup|set|up|make|making|that|can|will|all|and|with|about|them|itself|collecting|create|handles|tasks|task)\b"""), " ").replace(Regex("""\s+"""), " ").trim().split(" ").take(12).joinToString(" ").ifBlank { query }
             fun httpGet(u: String): String = (URL(u).openConnection() as HttpURLConnection).run {
                 requestMethod = "GET"; connectTimeout = 6000; readTimeout = 7000
                 setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36")
                 inputStream.bufferedReader().use { it.readText() }
             }
             val out = linkedSetOf<String>()
+
+            // 0. DuckDuckGo HTML snippets
+            val ddgH = runCatching { httpGet("https://html.duckduckgo.com/html/?q=" + Uri.encode(cleanQ)) }.getOrDefault("")
+            Regex("""class="result__snippet"[^>]*>(.*?)</a>""", RegexOption.DOT_MATCHES_ALL).findAll(ddgH)
+                .map { it.groupValues[1].replace(Regex("<[^>]+>"), "").replace("&amp;", "&").replace("&#x27;", "'").trim() }
+                .filter { it.length > 25 }.take(4).forEach { out.add("- $it") }
 
             // 1. Bing HTML snippets (great for tutorials & general web)
             val bingHtml = runCatching { httpGet("https://www.bing.com/search?q=" + Uri.encode(cleanQ)) }.getOrDefault("")
