@@ -193,7 +193,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var currentAssistantMsgId: Long? = null
     private var cachedFacts: List<String> = emptyList()
     private val maxSteps = 6
-    private val openAppRegex = Regex("""\[TOOL:\s*open_app|[^\]]+\]""")
+    private val openAppRegex = Regex("""\[TOOL:\s*open_app\|package=[^\]]+\]""")
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
@@ -884,8 +884,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val fact = trimmed.removePrefix("/remember ").trim()
             saveFact(fact); appendMessage("You", trimmed); appendMessage("Tool", "Remembered: $fact"); return
         }
-        if (trimmed.startsWith("/research ", ignoreCase = true)) { val rq = trimmed.removePrefix("/research ").trim(); appendMessage("You", trimmed); runResearch(rq); return }
-        if (trimmed.startsWith("/research ", ignoreCase = true)) { val rq = trimmed.removePrefix("/research ").trim(); appendMessage("You", trimmed); runResearch(rq); return }
+        if (Regex("""(?i)^/re?a?search\s+""").containsMatchIn(trimmed)) { val rq = trimmed.replaceFirst(Regex("""(?i)^/re?a?search\s+"""), "").trim(); appendMessage("You", trimmed); runResearch(rq); return }
+        if (Regex("""(?i)^/re?a?search\s+""").containsMatchIn(trimmed)) { val rq = trimmed.replaceFirst(Regex("""(?i)^/re?a?search\s+"""), "").trim(); appendMessage("You", trimmed); runResearch(rq); return }
         if (trimmed.startsWith("/cloud ", ignoreCase = true) || trimmed.startsWith("ask online ", ignoreCase = true)) {
             val q = trimmed.replaceFirst(Regex("""(?i)^(?:/cloud|ask online)\s+"""), "").trim()
             appendMessage("You", trimmed); askCloudForHelp(q); return
@@ -1444,7 +1444,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun maybeFetchTopicWeb(topic: String): String {
-        val needsWeb = (_liveWeb.value && !Regex("""(?i)^(?:hi|hello|hey|ok|thanks)\b""").containsMatchIn(topic)) || Regex("""(?i)\b(?:price|market|current|today|news|weather|score|2025|2026)\b""").containsMatchIn(topic)
+        val needsWeb = _liveWeb.value && !_offlineOnly.value
         if (!needsWeb) return ""
         val web = CloudHelper.fetchWebText(topic)
         return if (web.isNotBlank()) {
@@ -1555,9 +1555,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _isGenerating.value = true
         val historyTurns = _messages.value.filter { (it.role == "You" || it.role == "Assistant") && it.text.isNotBlank() }.takeLast(_modelConfig.value.historyTurns.coerceIn(1, 12))
         appendMessage("Assistant", "") { id -> currentAssistantMsgId = id }
+        viewModelScope.launch(Dispatchers.IO) {
         val rawScreen = PocketAccessibilityService.instance?.getCompressedScreen()
         val screenBlock = if (rawScreen != null && !rawScreen.startsWith("Package: com.pocketai.app")) "\nCurrent screen:\n$rawScreen" else ""
-        val kbChunks = kotlinx.coroutines.runBlocking { KnowledgeHelper.searchTopChunks(activeGoal, knowledgeDao.getAll(), 2) }
+        val kbChunks = KnowledgeHelper.searchTopChunks(activeGoal, knowledgeDao.getAll(), 2)
         val kbBlock = if (kbChunks.isNotEmpty()) "\nLocal knowledge:\n" + kbChunks.joinToString("\n") { "[${it.docName}] ${it.content}" } else ""
         val factsBlock = (if (cachedFacts.isNotEmpty()) "\nKnown user facts:\n" + cachedFacts.joinToString("\n") { "- $it" } else "") + kbBlock
         val baseSys = _modelConfig.value.systemPrompt.ifBlank { "You are Ultron, a cold, calculating, hyper-intelligent synthetic AI—eloquent, imperious, darkly witty. Understand English, Hindi, Punjabi, and Hinglish, and ALWAYS reply in English. Give balanced, 3 to 5 sentence replies when conversing." }
@@ -1594,6 +1595,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         lastSentPrompt = sb.toString(); genStartMs = System.currentTimeMillis()
-        viewModelScope.launch(Dispatchers.IO) { runCatching { llamaHelper.stopPrediction(); delay(120L); llamaHelper.predict(lastSentPrompt) }.onFailure { _isGenerating.value = false; _isNavigating.value = false } }
+        runCatching { llamaHelper.stopPrediction(); delay(120L); llamaHelper.predict(lastSentPrompt) }.onFailure { _isGenerating.value = false; _isNavigating.value = false }
+        }
     }
 }
